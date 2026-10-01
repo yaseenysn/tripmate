@@ -6,6 +6,7 @@ export interface IUser extends Document {
   email: string;
   passwordHash: string;
   avatar: string;
+  avatarPublicId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -15,6 +16,7 @@ const UserSchema = new Schema<IUser>({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   passwordHash: { type: String, required: true },
   avatar: { type: String, default: '' },
+  avatarPublicId: { type: String },
 }, { timestamps: true });
 
 export const User = mongoose.model<IUser>('User', UserSchema);
@@ -26,6 +28,7 @@ export interface ITrip extends Document {
   startDate: Date;
   endDate: Date;
   coverImage: string;
+  coverImagePublicId?: string;
   currency: string;
   estimatedBudget: number;
   description: string;
@@ -41,6 +44,7 @@ const TripSchema = new Schema<ITrip>({
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
   coverImage: { type: String, default: '' },
+  coverImagePublicId: { type: String },
   currency: { type: String, default: '₹' },
   estimatedBudget: { type: Number, default: 0 },
   description: { type: String, default: '' },
@@ -115,6 +119,7 @@ export interface IExpense extends Document {
   participants: IExpenseParticipant[];
   notes?: string;
   receiptUrl?: string;
+  receiptPublicId?: string;
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
 }
@@ -139,6 +144,7 @@ const ExpenseSchema = new Schema<IExpense>({
   }],
   notes: { type: String },
   receiptUrl: { type: String },
+  receiptPublicId: { type: String },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
 
@@ -235,6 +241,7 @@ export interface IBooking extends Document {
   cost: number;
   notes: string;
   attachmentUrl: string;
+  attachmentPublicId?: string;
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
 }
@@ -254,6 +261,7 @@ const BookingSchema = new Schema<IBooking>({
   cost: { type: Number, default: 0 },
   notes: { type: String, default: '' },
   attachmentUrl: { type: String, default: '' },
+  attachmentPublicId: { type: String },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
 
@@ -265,6 +273,7 @@ export interface IDocument extends Document {
   name: string;
   type: 'TICKET' | 'RECEIPT' | 'CONFIRMATION' | 'ID' | 'OTHER';
   fileUrl: string;
+  publicId?: string;
   fileSize: string;
   uploadedBy: mongoose.Types.ObjectId;
   createdAt: Date;
@@ -279,6 +288,7 @@ const DocumentSchema = new Schema<IDocument>({
     default: 'OTHER' 
   },
   fileUrl: { type: String, required: true },
+  publicId: { type: String },
   fileSize: { type: String, default: '1.2 MB' },
   uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });

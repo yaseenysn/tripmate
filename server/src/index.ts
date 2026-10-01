@@ -23,6 +23,7 @@ import taskRoutes from './routes/taskRoutes';
 import pollRoutes from './routes/pollRoutes';
 import activityRoutes from './routes/activityRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import uploadRoutes from './routes/uploadRoutes';
 
 import path from 'path';
 
@@ -66,6 +67,7 @@ initSocket(io);
 
 // Mount API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/upload', uploadRoutes);
 app.use('/api/trips', tripRoutes);
 app.use('/api', inviteRoutes);
 app.use('/api/trips', memberRoutes);

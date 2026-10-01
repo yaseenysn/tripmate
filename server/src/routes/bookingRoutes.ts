@@ -4,6 +4,7 @@ import { authenticateToken } from '../middleware/auth';
 import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { deleteFromCloudinary } from '../config/cloudinary';
 
 const router = Router();
 
@@ -23,7 +24,7 @@ router.post('/:id/bookings', authenticateToken, requireTripMembership, async (re
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
-    const { type, provider, bookingReference, date, time, location, cost, notes, attachmentUrl } = req.body;
+    const { type, provider, bookingReference, date, time, location, cost, notes, attachmentUrl, attachmentPublicId } = req.body;
 
     if (!type || !provider || !date) {
       return res.status(400).json({ error: 'Type, provider, and date are required' });
@@ -40,6 +41,7 @@ router.post('/:id/bookings', authenticateToken, requireTripMembership, async (re
       cost: Number(cost) || 0,
       notes: notes || '',
       attachmentUrl: attachmentUrl || '',
+      attachmentPublicId: attachmentPublicId || undefined,
       createdBy: userId
     });
 
@@ -64,12 +66,19 @@ router.patch('/:id/bookings/:bookingId', authenticateToken, requireTripMembershi
       return res.status(404).json({ error: 'Booking not found' });
     }
 
-    const fields = ['type', 'provider', 'bookingReference', 'date', 'time', 'location', 'cost', 'notes', 'attachmentUrl'];
+    const oldPublicId = booking.attachmentPublicId;
+
+    const fields = ['type', 'provider', 'bookingReference', 'date', 'time', 'location', 'cost', 'notes', 'attachmentUrl', 'attachmentPublicId'];
     fields.forEach(field => {
       if (req.body[field] !== undefined) {
         (booking as any)[field] = field === 'date' ? new Date(req.body[field]) : req.body[field];
       }
     });
+
+    if (oldPublicId && req.body.attachmentPublicId && oldPublicId !== req.body.attachmentPublicId) {
+      await deleteFromCloudinary(oldPublicId, 'raw');
+      await deleteFromCloudinary(oldPublicId, 'image');
+    }
 
     await booking.save();
     const populated = await Booking.findById(booking._id).populate('createdBy', 'name avatar');
@@ -91,6 +100,11 @@ router.delete('/:id/bookings/:bookingId', authenticateToken, requireTripMembersh
 
     if (!booking || booking.tripId.toString() !== tripId) {
       return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    if (booking.attachmentPublicId) {
+      await deleteFromCloudinary(booking.attachmentPublicId, 'raw');
+      await deleteFromCloudinary(booking.attachmentPublicId, 'image');
     }
 
     const provider = booking.provider;

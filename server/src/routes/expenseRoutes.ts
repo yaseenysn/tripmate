@@ -6,6 +6,7 @@ import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { deleteFromCloudinary } from '../config/cloudinary';
 
 const router = Router();
 
@@ -82,7 +83,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, async (re
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
-    const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl } = req.body;
+    const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl, receiptPublicId } = req.body;
 
     if (!title || !amount || Number(amount) <= 0) {
       return res.status(400).json({ error: 'Valid title and positive amount are required' });
@@ -112,6 +113,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, async (re
       participants: computedParticipants,
       notes,
       receiptUrl,
+      receiptPublicId,
       createdBy: userId
     });
 
@@ -168,7 +170,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, async (re
 router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, expenseId } = req.params;
-    const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl } = req.body;
+    const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl, receiptPublicId } = req.body;
 
     const expense = await Expense.findById(expenseId);
     if (!expense || expense.tripId.toString() !== tripId) {
@@ -186,6 +188,8 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
       return res.status(403).json({ error: 'You do not have permission to edit this expense' });
     }
 
+    const oldPublicId = expense.receiptPublicId;
+
     if (title !== undefined) expense.title = title;
     if (amount !== undefined) expense.amount = Number(amount);
     if (category !== undefined) expense.category = category;
@@ -194,6 +198,12 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
     if (splitType !== undefined) expense.splitType = splitType;
     if (notes !== undefined) expense.notes = notes;
     if (receiptUrl !== undefined) expense.receiptUrl = receiptUrl;
+    if (receiptPublicId !== undefined) expense.receiptPublicId = receiptPublicId;
+
+    if (oldPublicId && receiptPublicId && oldPublicId !== receiptPublicId) {
+      await deleteFromCloudinary(oldPublicId, 'image');
+      await deleteFromCloudinary(oldPublicId, 'raw');
+    }
 
     if (participants || amount !== undefined || splitType !== undefined || paidBy !== undefined) {
       let targetParticipants = participants;
@@ -299,6 +309,11 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
 
     if (!isCreator && !isPayer && !isAdmin) {
       return res.status(403).json({ error: 'You do not have permission to delete this expense' });
+    }
+
+    if (expense.receiptPublicId) {
+      await deleteFromCloudinary(expense.receiptPublicId, 'image');
+      await deleteFromCloudinary(expense.receiptPublicId, 'raw');
     }
 
     const title = expense.title;

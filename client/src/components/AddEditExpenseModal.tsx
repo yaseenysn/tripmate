@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, DollarSign, Tag, User, Users, Percent, Check } from 'lucide-react';
-import { apiCreateExpense, apiUpdateExpense } from '../services/api';
+import { X, DollarSign, Tag, User, Users, Percent, Check, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
+import { apiCreateExpense, apiUpdateExpense, apiUploadFile } from '../services/api';
 
 interface AddEditExpenseModalProps {
   isOpen: boolean;
@@ -43,6 +43,10 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
   const [splitType, setSplitType] = useState<'EQUAL' | 'CUSTOM' | 'PERCENTAGE'>('EQUAL');
   const [notes, setNotes] = useState('');
 
+  const [receiptUrl, setReceiptUrl] = useState('');
+  const [receiptPublicId, setReceiptPublicId] = useState('');
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+
   // Selected participants & custom inputs map: userId -> share/pct
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [customShares, setCustomShares] = useState<Record<string, string>>({});
@@ -60,6 +64,8 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
       setPaidBy(expenseToEdit.paidBy?._id || expenseToEdit.paidBy || currentUser?._id || '');
       setSplitType(expenseToEdit.splitType || 'EQUAL');
       setNotes(expenseToEdit.notes || '');
+      setReceiptUrl(expenseToEdit.receiptUrl || '');
+      setReceiptPublicId(expenseToEdit.receiptPublicId || '');
 
       if (expenseToEdit.participants && expenseToEdit.participants.length > 0) {
         const pIds = expenseToEdit.participants.map((p: any) => p.userId?._id || p.userId);
@@ -84,6 +90,8 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
       setPaidBy(currentUser?._id || (members[0]?.user?._id || members[0]?.userId?._id || ''));
       setSplitType('EQUAL');
       setNotes('');
+      setReceiptUrl('');
+      setReceiptPublicId('');
       setSelectedMembers(members.map((m: any) => m.user?._id || m.userId?._id || m.userId));
       setCustomShares({});
       setCustomPcts({});
@@ -96,6 +104,23 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
       setSelectedMembers(selectedMembers.filter((id) => id !== uId));
     } else {
       setSelectedMembers([...selectedMembers, uId]);
+    }
+  };
+
+  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingReceipt(true);
+    setError('');
+    try {
+      const res = await apiUploadFile(file, 'expenses');
+      setReceiptUrl(res.secureUrl || res.url);
+      setReceiptPublicId(res.publicId);
+    } catch (err: any) {
+      setError(err.message || 'Failed to upload receipt');
+    } finally {
+      setUploadingReceipt(false);
     }
   };
 
@@ -129,7 +154,9 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
         paidBy: paidBy || currentUser?._id,
         splitType,
         participants: participantsPayload,
-        notes: notes.trim()
+        notes: notes.trim(),
+        receiptUrl: receiptUrl || undefined,
+        receiptPublicId: receiptPublicId || undefined,
       };
 
       if (isEditMode) {
@@ -316,6 +343,41 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Receipt Upload */}
+          <div>
+            <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1">Receipt Attachment (Optional)</label>
+            <div className="flex items-center gap-2">
+              <label className="flex-1 cursor-pointer bg-[#202c33] hover:bg-slate-700/80 border border-slate-700/80 rounded-xl px-3 py-2 flex items-center justify-between text-slate-300 transition-all">
+                <span className="text-[11px] font-medium truncate">
+                  {uploadingReceipt ? 'Uploading to Cloudinary...' : receiptUrl ? 'Receipt attached ✓' : 'Upload receipt image/PDF'}
+                </span>
+                {uploadingReceipt ? (
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4 text-slate-400" />
+                )}
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={handleReceiptUpload}
+                  disabled={uploadingReceipt}
+                  className="hidden"
+                />
+              </label>
+              {receiptUrl && (
+                <a
+                  href={receiptUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-2 bg-emerald-600/20 text-emerald-400 rounded-xl border border-emerald-500/30 font-semibold hover:bg-emerald-600/30"
+                  title="View attached receipt"
+                >
+                  View
+                </a>
+              )}
             </div>
           </div>
 

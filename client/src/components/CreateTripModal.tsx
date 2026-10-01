@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Calendar, MapPin, IndianRupee, Image as ImageIcon, Sparkles } from 'lucide-react';
-import { apiCreateTrip } from '../services/api';
+import { apiCreateTrip, apiUploadFile } from '../services/api';
 
 interface CreateTripModalProps {
   isOpen: boolean;
@@ -23,9 +23,13 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({ isOpen, onClos
   const [endDate, setEndDate] = useState('');
   const [estimatedBudget, setEstimatedBudget] = useState('50000');
   const [coverImage, setCoverImage] = useState(PRESET_COVERS[0].url);
+  const [coverImagePublicId, setCoverImagePublicId] = useState('');
+  const [uploadingCover, setUploadingCover] = useState(false);
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
@@ -47,6 +51,7 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({ isOpen, onClos
         endDate,
         estimatedBudget: Number(estimatedBudget) || 0,
         coverImage,
+        coverImagePublicId: coverImagePublicId || undefined,
         description
       });
       onTripCreated(data.trip);
@@ -161,19 +166,54 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({ isOpen, onClos
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-              Cover Image Preset
+              Cover Image Preset or Upload
             </label>
             <div className="grid grid-cols-5 gap-2 mb-2">
               {PRESET_COVERS.map((preset, idx) => (
                 <button
                   type="button"
                   key={idx}
-                  onClick={() => setCoverImage(preset.url)}
+                  onClick={() => {
+                    setCoverImage(preset.url);
+                    setCoverImagePublicId('');
+                  }}
                   className={`relative rounded-xl overflow-hidden h-14 border-2 transition-all ${coverImage === preset.url ? 'border-indigo-500 scale-105 shadow-md shadow-indigo-500/30' : 'border-transparent opacity-70 hover:opacity-100'}`}
                 >
                   <img src={preset.url} alt={preset.name} className="w-full h-full object-cover" />
                 </button>
               ))}
+            </div>
+
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="file"
+                ref={coverInputRef}
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setUploadingCover(true);
+                  try {
+                    const res = await apiUploadFile(file, 'trips');
+                    setCoverImage(res.secureUrl || res.url);
+                    setCoverImagePublicId(res.publicId);
+                  } catch (err: any) {
+                    setError(err.message || 'Failed to upload cover image');
+                  } finally {
+                    setUploadingCover(false);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => coverInputRef.current?.click()}
+                disabled={uploadingCover}
+                className="w-full bg-slate-800 hover:bg-slate-750 border border-slate-700/80 rounded-xl px-3 py-2 text-xs font-medium text-indigo-400 hover:text-indigo-300 flex items-center justify-center gap-2 transition-all"
+              >
+                <ImageIcon className="w-4 h-4" />
+                <span>{uploadingCover ? 'Uploading Cover to Cloudinary...' : 'Upload Custom Cover Image'}</span>
+              </button>
             </div>
           </div>
 

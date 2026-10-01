@@ -4,6 +4,7 @@ import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { requireTripMembership, requireTripAdmin, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { deleteFromCloudinary } from '../config/cloudinary';
 
 const router = Router();
 
@@ -57,7 +58,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
-    const { name, destination, startDate, endDate, coverImage, currency, estimatedBudget, description } = req.body;
+    const { name, destination, startDate, endDate, coverImage, coverImagePublicId, currency, estimatedBudget, description } = req.body;
 
     if (!name || !destination || !startDate || !endDate) {
       return res.status(400).json({ error: 'Name, destination, start date, and end date are required' });
@@ -72,6 +73,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       startDate: new Date(startDate),
       endDate: new Date(endDate),
       coverImage: coverImage || 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80',
+      coverImagePublicId: coverImagePublicId || undefined,
       currency: currency || '₹',
       estimatedBudget: budgetAmount,
       description: description || '',
@@ -146,22 +148,29 @@ router.get('/:id', authenticateToken, requireTripMembership, async (req: TripAut
 // PATCH /api/trips/:id - Update trip (Admin only)
 router.patch('/:id', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
   try {
-    const { name, destination, startDate, endDate, coverImage, currency, estimatedBudget, description, status } = req.body;
+    const { name, destination, startDate, endDate, coverImage, coverImagePublicId, currency, estimatedBudget, description, status } = req.body;
 
     const trip = await Trip.findById(req.params.id);
     if (!trip) {
       return res.status(404).json({ error: 'Trip not found' });
     }
 
+    const oldPublicId = trip.coverImagePublicId;
+
     if (name) trip.name = name;
     if (destination) trip.destination = destination;
     if (startDate) trip.startDate = new Date(startDate);
     if (endDate) trip.endDate = new Date(endDate);
     if (coverImage !== undefined) trip.coverImage = coverImage;
+    if (coverImagePublicId !== undefined) trip.coverImagePublicId = coverImagePublicId;
     if (currency) trip.currency = currency;
     if (estimatedBudget !== undefined) trip.estimatedBudget = Number(estimatedBudget);
     if (description !== undefined) trip.description = description;
     if (status) trip.status = status;
+
+    if (oldPublicId && coverImagePublicId && oldPublicId !== coverImagePublicId) {
+      await deleteFromCloudinary(oldPublicId, 'image');
+    }
 
     await trip.save();
 
@@ -187,6 +196,11 @@ router.patch('/:id', authenticateToken, requireTripMembership, requireTripAdmin,
 router.delete('/:id', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
+    const trip = await Trip.findById(tripId);
+    if (trip && trip.coverImagePublicId) {
+      await deleteFromCloudinary(trip.coverImagePublicId, 'image');
+    }
+
     await Trip.findByIdAndDelete(tripId);
     await TripMember.deleteMany({ tripId });
     await Expense.deleteMany({ tripId });

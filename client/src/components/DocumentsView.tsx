@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { FileText, Plus, Download, Trash2, Image, FileCheck } from 'lucide-react';
-import { apiCreateDocument, apiDeleteDocument } from '../services/api';
+import React, { useState, useRef } from 'react';
+import { FileText, Plus, Download, Trash2, Upload, Loader2 } from 'lucide-react';
+import { apiCreateDocument, apiDeleteDocument, apiUploadFile } from '../services/api';
 
 interface DocumentsViewProps {
   tripId: string;
@@ -20,29 +20,78 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   React.useEffect(() => {
     if (openAddModal) setShowAddModal(true);
   }, [openAddModal]);
+
   const [name, setName] = useState('');
   const [type, setType] = useState('TICKET');
   const [fileUrl, setFileUrl] = useState('');
+  const [publicId, setPublicId] = useState('');
+  const [fileSize, setFileSize] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSelectedFile(file);
+    if (!name) {
+      setName(file.name);
+    }
+
+    setUploading(true);
+    setError('');
+    try {
+      const uploadRes = await apiUploadFile(file, 'documents');
+      setFileUrl(uploadRes.secureUrl || uploadRes.url);
+      setPublicId(uploadRes.publicId);
+      const sizeMb = (uploadRes.bytes / (1024 * 1024)).toFixed(1);
+      setFileSize(`${sizeMb} MB`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to upload file to Cloudinary');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleUploadDoc = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name) return;
+    if (!name || (!fileUrl && !selectedFile)) {
+      setError('Please select a file or provide a valid URL');
+      return;
+    }
 
     setLoading(true);
+    setError('');
     try {
+      let finalUrl = fileUrl;
+      let finalPublicId = publicId;
+
+      if (!finalUrl && selectedFile) {
+        const uploadRes = await apiUploadFile(selectedFile, 'documents');
+        finalUrl = uploadRes.secureUrl || uploadRes.url;
+        finalPublicId = uploadRes.publicId;
+      }
+
       await apiCreateDocument(tripId, {
         name,
         type,
-        fileUrl: fileUrl || 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=400&q=80',
-        fileSize: '1.2 MB'
+        fileUrl: finalUrl,
+        publicId: finalPublicId,
+        fileSize: fileSize || '1.2 MB'
       });
+
       setShowAddModal(false);
       setName('');
       setFileUrl('');
+      setPublicId('');
+      setSelectedFile(null);
       onRefresh();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setError(err.message || 'Failed to create document');
     } finally {
       setLoading(false);
     }
@@ -81,7 +130,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
         <div className="glass-panel p-12 rounded-3xl text-center">
           <FileText className="w-12 h-12 text-slate-600 mx-auto mb-3" />
           <h3 className="text-base font-bold text-slate-300">No documents uploaded</h3>
-          <p className="text-xs text-slate-500 mt-1">Store travel tickets, receipts, and hotel confirmation PDFs securely.</p>
+          <p className="text-xs text-slate-500 mt-1">Store travel tickets, receipts, and hotel confirmation PDFs securely via Cloudinary.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -124,8 +173,52 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold text-slate-100 mb-4">Upload Document</h3>
+            <h3 className="text-lg font-bold text-slate-100 mb-4">Upload Document to Cloudinary</h3>
+            
+            {error && (
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-400">
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleUploadDoc} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                  Select File *
+                </label>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="w-full bg-slate-800 border border-dashed border-slate-700 hover:border-cyan-500/60 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-slate-300 hover:text-cyan-400 transition-all"
+                >
+                  {uploading ? (
+                    <div className="flex items-center gap-2 text-cyan-400 text-xs font-medium">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Uploading to Cloudinary...</span>
+                    </div>
+                  ) : selectedFile ? (
+                    <div className="flex items-center gap-2 text-emerald-400 text-xs font-medium">
+                      <FileText className="w-5 h-5" />
+                      <span>{selectedFile.name} (Uploaded)</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="w-6 h-6 text-slate-400" />
+                      <span className="text-xs font-semibold">Click to choose image or document</span>
+                      <span className="text-[10px] text-slate-500">PDF, JPG, PNG, DOC, TXT (Max 10MB)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
                   Document Title *
@@ -157,19 +250,6 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                 </select>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">
-                  File URL / Cloud Link
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://..."
-                  value={fileUrl}
-                  onChange={(e) => setFileUrl(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-slate-100 text-sm focus:outline-none"
-                />
-              </div>
-
               <div className="pt-2 flex gap-3">
                 <button
                   type="button"
@@ -180,10 +260,10 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="flex-1 bg-cyan-600 text-white text-xs font-semibold py-2.5 rounded-xl shadow-lg"
+                  disabled={loading || uploading}
+                  className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold py-2.5 rounded-xl shadow-lg shadow-cyan-600/20 disabled:opacity-50"
                 >
-                  Upload File
+                  {loading ? 'Saving...' : 'Save Document'}
                 </button>
               </div>
             </form>

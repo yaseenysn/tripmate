@@ -85,6 +85,8 @@ router.post('/logout', (req: Request, res: Response) => {
   res.json({ message: 'Logged out successfully' });
 });
 
+import { deleteFromCloudinary } from '../config/cloudinary';
+
 // Me
 router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -95,6 +97,41 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
     res.json({ user });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Server error' });
+  }
+});
+
+// Update Profile
+router.patch('/profile', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { name, avatar, avatarPublicId } = req.body;
+    const user = await User.findById(req.user?.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const oldPublicId = user.avatarPublicId;
+
+    if (name) user.name = name;
+    if (avatar !== undefined) user.avatar = avatar;
+    if (avatarPublicId !== undefined) user.avatarPublicId = avatarPublicId;
+
+    if (oldPublicId && avatarPublicId && oldPublicId !== avatarPublicId) {
+      await deleteFromCloudinary(oldPublicId, 'image');
+    }
+
+    await user.save();
+
+    res.json({
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        avatarPublicId: user.avatarPublicId,
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Error updating profile' });
   }
 });
 

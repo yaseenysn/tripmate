@@ -4,6 +4,7 @@ import { authenticateToken } from '../middleware/auth';
 import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { deleteFromCloudinary } from '../config/cloudinary';
 
 const router = Router();
 
@@ -23,7 +24,7 @@ router.post('/:id/documents', authenticateToken, requireTripMembership, async (r
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
-    const { name, type, fileUrl, fileSize } = req.body;
+    const { name, type, fileUrl, publicId, fileSize } = req.body;
 
     if (!name || !fileUrl) {
       return res.status(400).json({ error: 'Name and file URL are required' });
@@ -34,6 +35,7 @@ router.post('/:id/documents', authenticateToken, requireTripMembership, async (r
       name,
       type: type || 'OTHER',
       fileUrl,
+      publicId: publicId || undefined,
       fileSize: fileSize || '1.2 MB',
       uploadedBy: userId
     });
@@ -57,6 +59,11 @@ router.delete('/:id/documents/:documentId', authenticateToken, requireTripMember
 
     if (!doc || doc.tripId.toString() !== tripId) {
       return res.status(404).json({ error: 'Document not found' });
+    }
+
+    if (doc.publicId) {
+      const isRaw = !doc.fileUrl.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i);
+      await deleteFromCloudinary(doc.publicId, isRaw ? 'raw' : 'image');
     }
 
     const name = doc.name;

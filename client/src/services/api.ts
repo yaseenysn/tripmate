@@ -168,3 +168,55 @@ export const apiMarkNotificationRead = (id: string) =>
   request(`/notifications/${id}/read`, { method: 'PATCH' });
 export const apiMarkAllNotificationsRead = () =>
   request('/notifications/read-all', { method: 'PATCH' });
+
+// Profile Update
+export const apiUpdateProfile = (profileData: { name?: string; avatar?: string; avatarPublicId?: string }) =>
+  request('/auth/profile', { method: 'PATCH', body: JSON.stringify(profileData) });
+
+// File Upload to Backend -> Cloudinary
+export interface UploadResponse {
+  url: string;
+  secureUrl: string;
+  publicId: string;
+  bytes: number;
+  format: string;
+  resourceType: string;
+  originalName: string;
+}
+
+export const apiUploadFile = async (
+  file: File,
+  folder: 'profiles' | 'trips' | 'expenses' | 'bookings' | 'documents' | 'chat' = 'documents'
+): Promise<UploadResponse> => {
+  const token = getAuthToken();
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('folder', folder);
+
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+  } catch (err) {
+    res = await fetch(`${FALLBACK_BASE}/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to upload file');
+  }
+
+  return data;
+};
