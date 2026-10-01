@@ -4,8 +4,12 @@ let socket: Socket | null = null;
 
 export const getSocket = () => {
   if (!socket) {
-    const backendUrl = import.meta.env.PROD ? window.location.origin : 'http://localhost:5000';
-    socket = io(backendUrl, {
+    const rawUrl = (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000')
+      .trim()
+      .replace(/\/$/, '')
+      .replace(/\/api$/, '');
+
+    socket = io(rawUrl, {
       autoConnect: true,
       transports: ['websocket', 'polling']
     });

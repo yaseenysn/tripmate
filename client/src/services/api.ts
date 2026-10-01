@@ -1,4 +1,23 @@
-const API_BASE = '/api';
+const getApiBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.trim()) {
+    const cleanUrl = envUrl.trim().replace(/\/$/, '');
+    return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+  }
+  return '/api';
+};
+
+const getFallbackBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.trim()) {
+    const cleanUrl = envUrl.trim().replace(/\/$/, '');
+    return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+  }
+  return 'http://localhost:5000/api';
+};
+
+const API_BASE = getApiBaseUrl();
+const FALLBACK_BASE = getFallbackBaseUrl();
 
 export const getAuthToken = () => localStorage.getItem('tripmate_token');
 export const setAuthToken = (token: string) => localStorage.setItem('tripmate_token', token);
@@ -22,8 +41,7 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
       headers
     });
   } catch (err) {
-    // Fallback directly to backend port 5000 if relative proxy fetch fails
-    res = await fetch(`http://localhost:5000${API_BASE}${endpoint}`, {
+    res = await fetch(`${FALLBACK_BASE}${endpoint}`, {
       ...options,
       headers
     });

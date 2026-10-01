@@ -32,17 +32,32 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Dynamic CORS configuration supporting FRONTEND_URL env var
+const getCorsOrigins = () => {
+  const frontendUrl = process.env.FRONTEND_URL;
+  if (!frontendUrl || frontendUrl.trim() === '*' || frontendUrl.trim() === '') {
+    return '*';
+  }
+  const origins = frontendUrl.split(',').map(url => url.trim().replace(/\/$/, ''));
+  // Always include local dev origins alongside production FRONTEND_URL if not wildcard
+  return Array.from(new Set([...origins, 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:3000', 'http://localhost:5000']));
+};
+
+const allowedOrigins = getCorsOrigins();
+
 app.use(cors({
-  origin: '*',
-  credentials: true
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 }));
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST', 'PATCH', 'DELETE']
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: true
   }
 });
 
