@@ -85,7 +85,24 @@ export const InviteModal: React.FC<InviteModalProps> = ({
     }
   };
 
-  const directInviteUrl = directInvite?.inviteUrl || (directInvite?.token ? `${window.location.origin}/join/${directInvite.token}` : '');
+  // Construct direct invite URL using current frontend domain (window.location.origin)
+  const getCleanDirectInviteUrl = (): string => {
+    if (directInvite?.token) {
+      return `${window.location.origin}/join/${directInvite.token}`;
+    }
+    if (directInvite?.inviteUrl) {
+      if (directInvite.inviteUrl.includes('onrender.com')) {
+        const parts = directInvite.inviteUrl.split('/join/');
+        if (parts[1]) {
+          return `${window.location.origin}/join/${parts[1]}`;
+        }
+      }
+      return directInvite.inviteUrl;
+    }
+    return '';
+  };
+
+  const directInviteUrl = getCleanDirectInviteUrl();
 
   const copyToClipboard = (text: string) => {
     if (!text) return;

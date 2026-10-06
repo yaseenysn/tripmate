@@ -21,26 +21,34 @@ const generate6DigitCode = () => {
   return code;
 };
 
-// Helper to obtain the clean Frontend Base URL dynamically
+// Helper to obtain the clean Frontend Base URL (Vercel domain)
 export const getFrontendBaseUrl = (req?: Request): string => {
-  if (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim()) {
-    const primaryUrl = process.env.FRONTEND_URL.split(',')[0].trim();
-    if (primaryUrl && primaryUrl !== '*') {
-      return primaryUrl.replace(/\/$/, '');
+  const rawEnv = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.trim() : '';
+  console.log(`[Invite Debug] Raw process.env.FRONTEND_URL: "${rawEnv}"`);
+
+  if (rawEnv && rawEnv !== '*') {
+    const firstUrl = rawEnv.split(',')[0].trim().replace(/^["']|["']$/g, '').replace(/\/$/, '');
+    if (firstUrl && !firstUrl.includes('onrender.com') && !firstUrl.includes(':5000')) {
+      console.log(`[Invite Debug] Using FRONTEND_URL env var: "${firstUrl}"`);
+      return firstUrl;
     }
   }
 
-  if (req && req.get('origin')) {
-    return req.get('origin')!.replace(/\/$/, '');
-  }
-
   if (req) {
-    const host = req.get('host') || 'localhost:3001';
-    const protocol = req.protocol || 'http';
-    const adjustedHost = host.replace(':5000', ':3001');
-    return `${protocol}://${adjustedHost}`.replace(/\/$/, '');
+    const originHeader = req.get('origin') || req.get('referer');
+    if (originHeader) {
+      try {
+        const u = new URL(originHeader);
+        const cleanOrigin = u.origin.replace(/\/$/, '');
+        if (!cleanOrigin.includes('onrender.com') && !cleanOrigin.includes(':5000')) {
+          console.log(`[Invite Debug] Using Request Origin/Referer header: "${cleanOrigin}"`);
+          return cleanOrigin;
+        }
+      } catch (e) {}
+    }
   }
 
+  console.log(`[Invite Debug] Defaulting to local dev fallback: "http://localhost:3001"`);
   return 'http://localhost:3001';
 };
 
@@ -98,6 +106,7 @@ router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMember
     // Configurable Frontend Join Link
     const frontendBaseUrl = getFrontendBaseUrl(req);
     const inviteUrl = `${frontendBaseUrl}/join/${token}`;
+    console.log(`[Invite Debug Email] Generated email inviteUrl: "${inviteUrl}" for ${targetEmail}`);
 
     // Send formatted Email
     await sendInviteEmail({
@@ -151,6 +160,8 @@ router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, 
 
     const frontendBaseUrl = getFrontendBaseUrl(req);
     const inviteUrl = `${frontendBaseUrl}/join/${token}`;
+    console.log(`[Invite Debug Link] Generated direct inviteUrl: "${inviteUrl}" (Token: ${token})`);
+
     const qrCodeDataUrl = await QRCode.toDataURL(inviteUrl);
 
     res.status(201).json({
@@ -176,6 +187,7 @@ router.get('/trips/:tripId/invites', authenticateToken, requireTripMembership, a
     const enriched = await Promise.all(
       invites.map(async (inv) => {
         const inviteUrl = `${frontendBaseUrl}/join/${inv.token}`;
+        console.log(`[Invite Debug List] Enriched invite token ${inv.token} -> inviteUrl: "${inviteUrl}"`);
         const qrCodeDataUrl = await QRCode.toDataURL(inviteUrl);
         return {
           ...inv.toObject(),
