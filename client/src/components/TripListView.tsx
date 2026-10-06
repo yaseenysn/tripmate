@@ -145,12 +145,19 @@ export const TripListView: React.FC<TripListViewProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between text-xs text-slate-400">
-                    <p className="truncate text-slate-300 font-normal text-[11px]">
+                    <p className="truncate text-slate-300 font-normal text-[11px] flex-1 mr-2">
                       {latestActivityText}
                     </p>
-                    <span className="text-[10px] font-semibold text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded-md flex-shrink-0 ml-1 border border-slate-700/50">
-                      {trip.memberCount || 1} members
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {trip.unreadCount > 0 && (
+                        <span className="min-w-[18px] h-4.5 px-1 rounded-full bg-[#00a884] text-slate-950 font-black text-[10px] flex items-center justify-center shadow-md animate-pulse">
+                          {trip.unreadCount}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-semibold text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded-md border border-slate-700/50">
+                        {trip.memberCount || 1} members
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>

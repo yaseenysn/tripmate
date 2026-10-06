@@ -192,6 +192,8 @@ export const apiVotePoll = (tripId: string, pollId: string, optionId: string) =>
 export const apiGetActivity = (tripId: string) => request(`/trips/${tripId}/activity`);
 export const apiSendChatMessage = (tripId: string, message: string, clientMessageId?: string) =>
   request(`/trips/${tripId}/activity`, { method: 'POST', body: JSON.stringify({ message, text: message, clientMessageId }) });
+export const apiMarkActivitiesRead = (tripId: string) =>
+  request(`/trips/${tripId}/activity/read`, { method: 'POST' }).catch(() => ({}));
 
 // Notifications
 export const apiGetNotifications = () => request('/notifications');

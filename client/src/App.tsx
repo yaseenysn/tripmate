@@ -36,7 +36,7 @@ import {
   apiGetExpenses, apiGetBudget, apiGetItinerary, apiGetBookings,
   apiGetSettlements, apiGetTasks, apiGetPolls,
   apiGetDocuments, apiGetActivity, apiGetNotifications,
-  apiSendChatMessage,
+  apiSendChatMessage, apiMarkActivitiesRead,
   setAuthToken, removeAuthToken, getAuthToken,
   apiJoinWithToken, apiDeleteExpense, apiDeleteTrip
 } from './services/api';
@@ -116,6 +116,25 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // History / Popstate handler for WhatsApp-style mobile back button behavior
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      const path = window.location.pathname;
+      if (path.startsWith('/trips/')) {
+        const tId = path.split('/trips/')[1]?.split('?')[0];
+        if (tId) {
+          setActiveTripId(tId);
+          setActiveSection('feed');
+          return;
+        }
+      }
+      setActiveTripId(null);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   // Load Trips
   const loadTrips = async () => {
     if (!user) return;
@@ -123,8 +142,15 @@ export const App: React.FC = () => {
       const res = await apiGetTrips();
       const loadedTrips = res.trips || [];
       setTrips(loadedTrips);
-      // Automatically select first trip on desktop if none selected
-      if (!activeTripId && loadedTrips.length > 0 && window.innerWidth >= 768) {
+      // Check if URL has active trip e.g. /trips/:id
+      const path = window.location.pathname;
+      let urlTripId: string | null = null;
+      if (path.startsWith('/trips/')) {
+        urlTripId = path.split('/trips/')[1]?.split('?')[0] || null;
+      }
+      if (urlTripId && loadedTrips.some((t: any) => t._id === urlTripId)) {
+        setActiveTripId(urlTripId);
+      } else if (!activeTripId && loadedTrips.length > 0 && window.innerWidth >= 768) {
         setActiveTripId(loadedTrips[0]._id);
       }
     } catch (err) {
@@ -135,6 +161,29 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (user) loadTrips();
   }, [user]);
+
+  const handleSelectTrip = (id: string | null) => {
+    if (id) {
+      if (activeTripId !== id && window.location.pathname !== `/trips/${id}`) {
+        window.history.pushState({ tripId: id }, '', `/trips/${id}`);
+      }
+      setActiveTripId(id);
+      setActiveSection('feed');
+      // Clear unread count for selected trip locally
+      setTrips((prev) =>
+        prev.map((t) => (t._id === id ? { ...t, unreadCount: 0 } : t))
+      );
+      // Call read activity status endpoint
+      apiMarkActivitiesRead(id).catch((err) =>
+        console.warn('Failed to mark read:', err)
+      );
+    } else {
+      if (window.location.pathname.startsWith('/trips/')) {
+        window.history.pushState({}, '', '/');
+      }
+      setActiveTripId(null);
+    }
+  };
 
   // Load Active Trip Workspace Payload (with In-Memory Caching & Non-blocking Background Sync)
   const loadWorkspaceData = async (tId: string, isBackground = false) => {
@@ -216,7 +265,6 @@ export const App: React.FC = () => {
       }
     } catch (err) {
       console.error('[Workspace] Error loading workspace data:', err);
-      // On background refresh failure, keep cached UI intact
     }
   };
 
@@ -234,6 +282,23 @@ export const App: React.FC = () => {
         console.log(`[Chat] [Socket Event] Received activity.created for trip at ${receivedTime}:`, newActivity);
 
         const targetTripId = String(newActivity.tripId?._id || newActivity.tripId || '');
+
+        // Increment unread count for non-active trips
+        if (targetTripId !== String(activeTripId)) {
+          setTrips((prev) =>
+            prev.map((t) => {
+              if (t._id === targetTripId) {
+                return {
+                  ...t,
+                  unreadCount: (t.unreadCount || 0) + 1,
+                  lastActivity: newActivity,
+                  updatedAt: newActivity.createdAt || new Date().toISOString(),
+                };
+              }
+              return t;
+            })
+          );
+        }
 
         // Update in-memory cache for target trip
         updateTripCacheItem(targetTripId, 'activities', (prev = []) => {
@@ -492,10 +557,7 @@ export const App: React.FC = () => {
             activeTripId={activeTripId}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
-            onSelectTrip={(id) => {
-              setActiveTripId(id);
-              setActiveSection('feed');
-            }}
+            onSelectTrip={(id) => handleSelectTrip(id)}
             onOpenCreateTrip={() => setShowCreateModal(true)}
             onOpenJoinTrip={() => setShowJoinModal(true)}
           />
@@ -535,7 +597,13 @@ export const App: React.FC = () => {
                   trip={tripData}
                   members={members}
                   isAdmin={isAdmin}
-                  onBackMobile={() => setActiveTripId(null)}
+                  onBackMobile={() => {
+                    if (window.history.length > 1 && window.location.pathname.startsWith('/trips/')) {
+                      window.history.back();
+                    } else {
+                      handleSelectTrip(null);
+                    }
+                  }}
                   onOpenInvite={() => setShowInviteModal(true)}
                   onOpenTripInfo={() => setShowTripInfo(true)}
                 />

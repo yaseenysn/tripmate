@@ -376,6 +376,8 @@ export interface IActivity extends Document {
   type: string;
   description: string;
   metadata?: Record<string, any>;
+  status?: 'SENT' | 'DELIVERED' | 'READ';
+  readBy?: mongoose.Types.ObjectId[];
   createdAt: Date;
 }
 
@@ -384,7 +386,9 @@ const ActivitySchema = new Schema<IActivity>({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   type: { type: String, required: true },
   description: { type: String, required: true },
-  metadata: { type: Object }
+  metadata: { type: Object },
+  status: { type: String, enum: ['SENT', 'DELIVERED', 'READ'], default: 'SENT' },
+  readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
 
 export const Activity = mongoose.model<IActivity>('Activity', ActivitySchema);

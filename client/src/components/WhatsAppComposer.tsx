@@ -155,14 +155,20 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
           <Plus className="w-5 h-5" />
         </button>
 
-        {/* Input Field */}
+        {/* Multiline Textarea Input Field */}
         <div className="flex-1 flex items-center bg-[#2a3942] rounded-2xl px-4 py-2 border border-slate-700/60 focus-within:border-emerald-500/60 transition-colors">
-          <input
-            type="text"
+          <textarea
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
             placeholder="Message..."
-            className="w-full bg-transparent text-slate-100 placeholder-slate-400 text-xs sm:text-sm focus:outline-none"
+            rows={1}
+            className="w-full bg-transparent text-slate-100 placeholder-slate-400 text-xs sm:text-sm focus:outline-none resize-none max-h-24 leading-relaxed"
           />
         </div>
 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { ExpenseMessageCard } from './ExpenseMessageCard';
 import {
   Calendar, Ticket, CheckSquare, Vote, FileText,
@@ -45,6 +45,28 @@ const getMemberColor = (name: string = '') => {
   return MEMBER_COLORS[index];
 };
 
+// WhatsApp-style Status Ticks for outgoing messages
+const MessageTicks: React.FC<{ act: any; isSelf: boolean }> = ({ act, isSelf }) => {
+  if (!isSelf) return null;
+
+  if (act.isPending) {
+    return <Clock className="w-3 h-3 text-slate-400 inline ml-1 animate-pulse" />;
+  }
+
+  const status = act.status || 'SENT';
+  const readBy = act.readBy || [];
+
+  if (status === 'READ' || readBy.length > 0) {
+    return <span className="text-cyan-400 font-bold ml-1 text-xs select-none" title="Read">✓✓</span>;
+  }
+
+  if (status === 'DELIVERED') {
+    return <span className="text-slate-400 font-bold ml-1 text-xs select-none" title="Delivered">✓✓</span>;
+  }
+
+  return <span className="text-slate-400 font-bold ml-1 text-xs select-none" title="Sent">✓</span>;
+};
+
 export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   activities = [],
   expenses = [],
@@ -63,12 +85,42 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   onToggleTaskStatus,
   onNavigateSection,
 }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const [unreadNewMessages, setUnreadNewMessages] = useState<number>(0);
+  const [isNearBottom, setIsNearBottom] = useState<boolean>(true);
 
-  // Auto scroll to bottom when new messages arrive
+  // Monitor container scroll position to handle "New Messages" indicator
+  const handleScroll = () => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+    const near = distanceFromBottom < 150;
+    setIsNearBottom(near);
+    if (near) {
+      setUnreadNewMessages(0);
+    }
+  };
+
+  // Auto scroll to bottom if near bottom when new messages arrive; otherwise increment new message counter
   useEffect(() => {
+    if (!containerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    const distanceFromBottom = scrollHeight - (scrollTop + clientHeight);
+
+    if (distanceFromBottom < 200 || isNearBottom) {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setUnreadNewMessages(0);
+    } else {
+      setUnreadNewMessages((prev: number) => prev + 1);
+    }
+  }, [activities.length]);
+
+  const scrollToBottom = () => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activities.length, expenses.length]);
+    setUnreadNewMessages(0);
+    setIsNearBottom(true);
+  };
 
   // Format date headers like WhatsApp: TODAY, YESTERDAY, 30 SEPTEMBER 2026
   const formatDateHeader = (dateObj: Date) => {
@@ -125,7 +177,9 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
 
   return (
     <div
-      className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 pb-6"
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 pb-6 relative"
       style={{
         backgroundColor: '#0b141a',
         backgroundImage: `radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 0)`,
@@ -401,9 +455,10 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                         <p className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">
                           {act.description}
                         </p>
-                        <span className="block text-[10px] text-slate-300 text-right mt-1 font-normal opacity-80">
-                          {timeStr}
-                        </span>
+                        <div className="flex items-center justify-end gap-1 text-[10px] text-slate-300 mt-1 font-normal opacity-90 select-none">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -413,6 +468,18 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
           </div>
         ))
       )}
+
+      {/* Floating New Messages Indicator Button */}
+      {unreadNewMessages > 0 && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="fixed bottom-20 right-6 z-40 bg-[#00a884] hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-2xl flex items-center gap-1.5 animate-bounce border border-emerald-400/40"
+        >
+          <span>↓ {unreadNewMessages} new {unreadNewMessages === 1 ? 'message' : 'messages'}</span>
+        </button>
+      )}
+
       <div ref={chatBottomRef} />
     </div>
   );

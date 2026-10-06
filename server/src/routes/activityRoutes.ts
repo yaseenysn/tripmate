@@ -50,4 +50,24 @@ router.post('/:id/activity', authenticateToken, requireTripMembership, async (re
   }
 });
 
+// POST /api/trips/:id/activity/read (Mark messages as read)
+router.post('/:id/activity/read', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+  try {
+    const tripId = req.params.id;
+    const userId = req.user!.userId;
+
+    await Activity.updateMany(
+      { tripId, userId: { $ne: userId }, readBy: { $ne: userId } },
+      { $addToSet: { readBy: userId }, $set: { status: 'READ' } }
+    );
+
+    const { emitToTrip } = require('../sockets/socketHandler');
+    emitToTrip(tripId, 'activity.read', { tripId, userId });
+
+    res.json({ message: 'Messages marked as read' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Error marking messages read' });
+  }
+});
+
 export default router;
