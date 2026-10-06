@@ -101,13 +101,16 @@ export const App: React.FC = () => {
     initializeAuth();
   }, []);
 
-  // Handle URL Join Token
+  // Handle URL Join Token (e.g. /join/:token)
   useEffect(() => {
     const path = window.location.pathname;
-    if (path.startsWith('/join/')) {
-      const token = path.split('/join/')[1];
-      if (token) {
-        setPendingJoinToken(token);
+    if (path.includes('/join/')) {
+      const rawToken = path.split('/join/')[1];
+      if (rawToken) {
+        const cleanToken = rawToken.split('?')[0].split('#')[0].trim();
+        if (cleanToken) {
+          setPendingJoinToken(cleanToken);
+        }
       }
     }
   }, []);
