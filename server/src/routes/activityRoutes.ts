@@ -25,20 +25,24 @@ router.post('/:id/activity', authenticateToken, requireTripMembership, async (re
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
-    const { text, message, type } = req.body;
+    const { text, message, type, clientMessageId } = req.body;
 
     const chatText = message || text;
     if (!chatText || !chatText.trim()) {
       return res.status(400).json({ error: 'Message content is required' });
     }
 
+    const startTime = Date.now();
     const { logActivity } = require('../services/activityService');
     const activity = await logActivity(
       tripId,
       userId,
       type || 'CHAT_MESSAGE',
-      chatText.trim()
+      chatText.trim(),
+      clientMessageId ? { clientMessageId } : undefined
     );
+
+    console.log(`[Backend Chat] Saved activity in ${Date.now() - startTime}ms. ID: ${activity?._id}`);
 
     res.status(201).json({ activity });
   } catch (error: any) {

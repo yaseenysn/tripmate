@@ -17,8 +17,9 @@ export const logActivity = async (
       metadata
     });
 
-    const populated = await Activity.findById(activity._id).populate('userId', 'name avatar');
+    const populated = await Activity.findById(activity._id).populate('userId', 'name avatar email');
 
+    console.log(`[Socket.IO Server] Emitting activity.created to trip_${tripId}:`, populated?._id);
     emitToTrip(tripId, 'activity.created', populated);
     return populated;
   } catch (error) {

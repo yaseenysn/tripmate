@@ -175,35 +175,81 @@ export const App: React.FC = () => {
       setActiveSection('feed');
 
       const socket = getSocket();
-      const handleRealtimeEvent = () => loadWorkspaceData(activeTripId);
 
-      socket.on('expense.created', handleRealtimeEvent);
-      socket.on('expense.updated', handleRealtimeEvent);
-      socket.on('expense.deleted', handleRealtimeEvent);
-      socket.on('member.joined', handleRealtimeEvent);
-      socket.on('member.removed', handleRealtimeEvent);
-      socket.on('itinerary.created', handleRealtimeEvent);
-      socket.on('itinerary.updated', handleRealtimeEvent);
-      socket.on('booking.created', handleRealtimeEvent);
-      socket.on('task.updated', handleRealtimeEvent);
-      socket.on('poll.voted', handleRealtimeEvent);
-      socket.on('settlement.updated', handleRealtimeEvent);
-      socket.on('activity.created', handleRealtimeEvent);
+      // Realtime Activity / Message handler - Updates feed instantly without 10 HTTP requests!
+      const handleActivityCreated = (newActivity: any) => {
+        const receivedTime = Date.now();
+        console.log(`[Chat] [Socket Event] Received activity.created for trip ${newActivity.tripId} at ${receivedTime}:`, newActivity);
+
+        const targetTripId = newActivity.tripId?._id || newActivity.tripId;
+        if (targetTripId !== activeTripId) return;
+
+        setActivities((prev) => {
+          const clientMsgId = newActivity.metadata?.clientMessageId;
+
+          // Check if activity already exists or matches optimistic pending message
+          const exists = prev.some((a) => {
+            if (a._id === newActivity._id) return true;
+            if (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) return true;
+            if (a.isPending && a.description === newActivity.description) {
+              const prevUser = a.userId?._id || a.userId?.id || a.userId;
+              const newUser = newActivity.userId?._id || newActivity.userId?.id || newActivity.userId;
+              if (prevUser === newUser) return true;
+            }
+            return false;
+          });
+
+          if (exists) {
+            // Replace temporary/pending message with authoritative server activity
+            return prev.map((a) => {
+              if (
+                a._id === newActivity._id ||
+                (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) ||
+                (a.isPending && a.description === newActivity.description)
+              ) {
+                return newActivity;
+              }
+              return a;
+            });
+          }
+
+          // Otherwise append new activity directly
+          return [...prev, newActivity];
+        });
+      };
+
+      const handleWorkspaceSync = () => {
+        // Sync non-chat features (Expenses, Itinerary, Bookings, Tasks, Polls, Settlements)
+        loadWorkspaceData(activeTripId);
+      };
+
+      socket.on('activity.created', handleActivityCreated);
+      socket.on('expense.created', handleWorkspaceSync);
+      socket.on('expense.updated', handleWorkspaceSync);
+      socket.on('expense.deleted', handleWorkspaceSync);
+      socket.on('member.joined', handleWorkspaceSync);
+      socket.on('member.removed', handleWorkspaceSync);
+      socket.on('itinerary.created', handleWorkspaceSync);
+      socket.on('itinerary.updated', handleWorkspaceSync);
+      socket.on('booking.created', handleWorkspaceSync);
+      socket.on('task.updated', handleWorkspaceSync);
+      socket.on('poll.voted', handleWorkspaceSync);
+      socket.on('settlement.updated', handleWorkspaceSync);
 
       return () => {
         leaveTripRoom(activeTripId);
-        socket.off('expense.created', handleRealtimeEvent);
-        socket.off('expense.updated', handleRealtimeEvent);
-        socket.off('expense.deleted', handleRealtimeEvent);
-        socket.off('member.joined', handleRealtimeEvent);
-        socket.off('member.removed', handleRealtimeEvent);
-        socket.off('itinerary.created', handleRealtimeEvent);
-        socket.off('itinerary.updated', handleRealtimeEvent);
-        socket.off('booking.created', handleRealtimeEvent);
-        socket.off('task.updated', handleRealtimeEvent);
-        socket.off('poll.voted', handleRealtimeEvent);
-        socket.off('settlement.updated', handleRealtimeEvent);
-        socket.off('activity.created', handleRealtimeEvent);
+        socket.off('activity.created', handleActivityCreated);
+        socket.off('expense.created', handleWorkspaceSync);
+        socket.off('expense.updated', handleWorkspaceSync);
+        socket.off('expense.deleted', handleWorkspaceSync);
+        socket.off('member.joined', handleWorkspaceSync);
+        socket.off('member.removed', handleWorkspaceSync);
+        socket.off('itinerary.created', handleWorkspaceSync);
+        socket.off('itinerary.updated', handleWorkspaceSync);
+        socket.off('booking.created', handleWorkspaceSync);
+        socket.off('task.updated', handleWorkspaceSync);
+        socket.off('poll.voted', handleWorkspaceSync);
+        socket.off('settlement.updated', handleWorkspaceSync);
       };
     }
   }, [activeTripId]);
@@ -221,12 +267,51 @@ export const App: React.FC = () => {
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!activeTripId) return;
+    if (!activeTripId || !text.trim()) return;
+
+    const startTime = Date.now();
+    const clientMessageId = `temp_${startTime}_${Math.random().toString(36).substring(2, 9)}`;
+
+    // 1. OPTIMISTIC UI UPDATE - Sender sees message IMMEDIATELY (0ms delay!)
+    const optimisticActivity = {
+      _id: clientMessageId,
+      clientMessageId,
+      tripId: activeTripId,
+      userId: user,
+      type: 'CHAT_MESSAGE',
+      description: text.trim(),
+      metadata: { clientMessageId },
+      createdAt: new Date().toISOString(),
+      isPending: true,
+    };
+
+    console.log(`[Chat] [0ms] Send initiated. Adding optimistic message locally:`, clientMessageId);
+    setActivities((prev) => [...prev, optimisticActivity]);
+
+    // 2. Persistent API call in background
     try {
-      await apiSendChatMessage(activeTripId, text);
-      loadWorkspaceData(activeTripId);
+      const res = await apiSendChatMessage(activeTripId, text.trim(), clientMessageId);
+      const elapsed = Date.now() - startTime;
+      console.log(`[Chat] [${elapsed}ms] API response received for:`, clientMessageId, res.activity?._id);
+
+      if (res.activity) {
+        setActivities((prev) =>
+          prev.map((a) =>
+            a._id === clientMessageId || a.clientMessageId === clientMessageId
+              ? res.activity
+              : a
+          )
+        );
+      }
     } catch (err) {
-      console.error('Error sending chat message:', err);
+      console.error('[Chat] Error sending message via API:', err);
+      setActivities((prev) =>
+        prev.map((a) =>
+          a._id === clientMessageId
+            ? { ...a, isPending: false, isError: true }
+            : a
+        )
+      );
     }
   };
 

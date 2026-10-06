@@ -1,15 +1,19 @@
 const getApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl && envUrl.trim()) {
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
     const cleanUrl = envUrl.trim().replace(/\/$/, '');
     return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+  }
+  // Local development default
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    return 'http://localhost:5000/api';
   }
   return '/api';
 };
 
 const getFallbackBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl && envUrl.trim()) {
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
     const cleanUrl = envUrl.trim().replace(/\/$/, '');
     return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
   }
@@ -34,22 +38,44 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const primaryUrl = `${API_BASE}${cleanEndpoint}`;
+
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${endpoint}`, {
+    res = await fetch(primaryUrl, {
       ...options,
       headers
     });
+
+    // Check if primary fetch returned HTML (e.g. Vercel SPA fallback / 404 page)
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('text/html') && FALLBACK_BASE && FALLBACK_BASE !== API_BASE) {
+      console.warn(`[API] Endpoint ${primaryUrl} returned HTML. Attempting fallback to ${FALLBACK_BASE}${cleanEndpoint}`);
+      res = await fetch(`${FALLBACK_BASE}${cleanEndpoint}`, {
+        ...options,
+        headers
+      });
+    }
   } catch (err) {
-    res = await fetch(`${FALLBACK_BASE}${endpoint}`, {
+    console.warn(`[API] Primary request to ${primaryUrl} failed:`, err);
+    res = await fetch(`${FALLBACK_BASE}${cleanEndpoint}`, {
       ...options,
       headers
     });
   }
 
+  // Inspect Content-Type to prevent JSON parse crashes on HTML pages
+  const finalContentType = res.headers.get('content-type') || '';
+  if (!finalContentType.includes('application/json')) {
+    const snippet = (await res.text()).substring(0, 200);
+    console.error(`[API Error] Received non-JSON response from ${res.url} (Status: ${res.status}):`, snippet);
+    throw new Error(`API request to ${cleanEndpoint} returned HTML instead of JSON (${res.status}). Please check VITE_API_URL environment variable.`);
+  }
+
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'An error occurred during request');
+    throw new Error(data.error || `HTTP ${res.status}: An error occurred during request`);
   }
 
   return data;
@@ -164,8 +190,8 @@ export const apiVotePoll = (tripId: string, pollId: string, optionId: string) =>
 
 // Activity & Chat
 export const apiGetActivity = (tripId: string) => request(`/trips/${tripId}/activity`);
-export const apiSendChatMessage = (tripId: string, message: string) =>
-  request(`/trips/${tripId}/activity`, { method: 'POST', body: JSON.stringify({ message }) });
+export const apiSendChatMessage = (tripId: string, message: string, clientMessageId?: string) =>
+  request(`/trips/${tripId}/activity`, { method: 'POST', body: JSON.stringify({ message, text: message, clientMessageId }) });
 
 // Notifications
 export const apiGetNotifications = () => request('/notifications');

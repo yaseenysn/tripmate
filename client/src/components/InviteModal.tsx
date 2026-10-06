@@ -27,11 +27,13 @@ export const InviteModal: React.FC<InviteModalProps> = ({
   const [directInvite, setDirectInvite] = useState<any>(null);
   const [linkLoading, setLinkLoading] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [linkError, setLinkError] = useState('');
 
   // Fetch or auto-create direct invite token when modal opens
   const fetchDirectInvite = async () => {
     if (!tripId) return;
     setLinkLoading(true);
+    setLinkError('');
     try {
       const data = await apiGetInvites(tripId);
       if (data.invites && data.invites.length > 0) {
@@ -40,8 +42,9 @@ export const InviteModal: React.FC<InviteModalProps> = ({
         const createRes = await apiCreateInvite(tripId);
         setDirectInvite(createRes.invite);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading invite link:', err);
+      setLinkError(err.message || 'Failed to generate direct invite link');
     } finally {
       setLinkLoading(false);
     }
@@ -205,6 +208,12 @@ export const InviteModal: React.FC<InviteModalProps> = ({
 
           {/* METHOD 2: DIRECT INVITE LINK */}
           <div className="space-y-2.5 bg-slate-950/60 p-3.5 rounded-2xl border border-slate-800/80">
+            {linkError && (
+              <div className="p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-400 flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{linkError}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
               <span className="flex items-center gap-1.5 text-slate-300">
                 <Link className="w-3.5 h-3.5 text-emerald-400" />
