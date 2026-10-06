@@ -7,6 +7,7 @@ import { requireTripMembership, requireTripAdmin, TripAuthRequest } from '../mid
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { sendInviteEmail } from '../services/emailService';
+import { emitToTrip } from '../sockets/socketHandler';
 
 const router = Router();
 
@@ -302,16 +303,10 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
     await invite.save();
 
     // Socket real-time broadcast to trip room
-    const io = req.app.get('socketio');
-    if (io) {
-      io.to(`trip_${trip._id.toString()}`).emit('member.joined', {
-        userId,
-        tripId: trip._id.toString()
-      });
-      io.to(`trip_${trip._id.toString()}`).emit('activity.created', {
-        tripId: trip._id.toString()
-      });
-    }
+    emitToTrip(trip._id.toString(), 'member.joined', {
+      userId,
+      tripId: trip._id.toString()
+    });
 
     await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `joined the trip via invite link`);
     await createNotification(userId, 'Joined Trip', `You joined "${trip.name}"`, 'TRIP', trip._id.toString());
@@ -367,16 +362,10 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
     await invite.save();
 
     // Socket real-time broadcast
-    const io = req.app.get('socketio');
-    if (io) {
-      io.to(`trip_${trip._id.toString()}`).emit('member.joined', {
-        userId,
-        tripId: trip._id.toString()
-      });
-      io.to(`trip_${trip._id.toString()}`).emit('activity.created', {
-        tripId: trip._id.toString()
-      });
-    }
+    emitToTrip(trip._id.toString(), 'member.joined', {
+      userId,
+      tripId: trip._id.toString()
+    });
 
     await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `joined the trip using code ${cleanCode}`);
     await createNotification(userId, 'Joined Trip', `You joined "${trip.name}"`, 'TRIP', trip._id.toString());

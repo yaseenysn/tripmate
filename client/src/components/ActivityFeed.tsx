@@ -203,6 +203,21 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
               const relatedDocId = act.metadata?.documentId;
               const relatedDoc = relatedDocId ? documents.find((d) => String(d._id) === String(relatedDocId)) : null;
 
+              // Helper to extract amount from text description if expense object/metadata amount is missing
+              const extractAmountFromDescription = (desc: string = ''): number => {
+                const match = desc.match(/₹\s*([\d,]+(?:\.\d+)?)/);
+                if (match && match[1]) {
+                  const parsed = parseFloat(match[1].replace(/,/g, ''));
+                  return isNaN(parsed) ? 0 : parsed;
+                }
+                return 0;
+              };
+
+              const fallbackAmount = relatedExpense?.amount
+                || act.metadata?.amount
+                || act.metadata?.expense?.amount
+                || extractAmountFromDescription(act.description);
+
               return (
                 <div
                   key={act._id || i}
@@ -222,8 +237,8 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                         <ExpenseMessageCard
                           expense={relatedExpense || act.metadata?.expense || {
                             _id: targetExpId,
-                            title: act.description || 'Expense',
-                            amount: act.metadata?.amount || act.metadata?.expense?.amount || 0,
+                            title: act.metadata?.title || act.description || 'Expense',
+                            amount: fallbackAmount,
                             category: act.metadata?.category || 'Miscellaneous',
                             paidBy: sender,
                             date: streamItem.timestamp,
