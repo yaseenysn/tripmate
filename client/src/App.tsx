@@ -27,6 +27,7 @@ import { PollsView } from './components/PollsView';
 import { DocumentsView } from './components/DocumentsView';
 import { BudgetView } from './components/BudgetView';
 
+import { JoinInviteConfirmationModal } from './components/JoinInviteConfirmationModal';
 import { WhatsAppComposer } from './components/WhatsAppComposer';
 
 // API & Socket
@@ -48,6 +49,7 @@ export const App: React.FC = () => {
   const [activeTripId, setActiveTripId] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<string>('feed');
   const [searchQuery, setSearchQuery] = useState('');
+  const [pendingJoinToken, setPendingJoinToken] = useState<string | null>(null);
 
   // Workspace State
   const [tripData, setTripData] = useState<any>(null);
@@ -104,17 +106,11 @@ export const App: React.FC = () => {
     const path = window.location.pathname;
     if (path.startsWith('/join/')) {
       const token = path.split('/join/')[1];
-      if (token && user) {
-        apiJoinWithToken(token)
-          .then((res) => {
-            alert('Successfully joined trip group!');
-            setActiveTripId(res.tripId);
-            window.history.replaceState({}, '', '/');
-          })
-          .catch((err) => alert(err.message || 'Failed to join trip'));
+      if (token) {
+        setPendingJoinToken(token);
       }
     }
-  }, [user]);
+  }, []);
 
   // Load Trips
   const loadTrips = async () => {
@@ -235,9 +231,10 @@ export const App: React.FC = () => {
   };
 
   const handleSelectQuickAction = (
-    actionType: 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
+    actionType: 'PHOTO' | 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
   ) => {
     const map: Record<string, string> = {
+      PHOTO: 'documents',
       EXPENSE: 'expenses',
       ITINERARY: 'itinerary',
       BOOKING: 'bookings',
@@ -248,7 +245,6 @@ export const App: React.FC = () => {
     const target = map[actionType];
     if (target) {
       setActiveSection(target);
-      setAutoOpenModalCategory(target);
     }
   };
 
@@ -287,19 +283,26 @@ export const App: React.FC = () => {
   // Protected Route: Render Login / Register if unauthenticated
   if (!user) {
     return (
-      <AuthView
-        onAuthSuccess={(authUser) => {
-          setUser(authUser);
-          loadTrips();
-        }}
-      />
+      <div className="min-h-screen bg-slate-950 flex flex-col justify-center relative">
+        {pendingJoinToken && (
+          <div className="bg-emerald-600 text-white text-xs font-bold px-4 py-3 text-center shadow-lg sticky top-0 z-50">
+            🎉 You have been invited to join a TripMate group! Please sign in or create an account to view and accept your invitation.
+          </div>
+        )}
+        <AuthView
+          onAuthSuccess={(authUser) => {
+            setUser(authUser);
+            loadTrips();
+          }}
+        />
+      </div>
     );
   }
 
   const isAdmin = tripData?.userRole === 'ADMIN';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
+    <div className="h-screen h-dvh max-h-screen max-h-dvh overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
       {/* Top App Header */}
       <WhatsAppHeader
         user={user}
@@ -313,10 +316,10 @@ export const App: React.FC = () => {
       />
 
       {/* Main WhatsApp Web Inspired 2-Column Shell */}
-      <div className="flex-1 flex overflow-hidden max-w-7xl w-full mx-auto">
+      <div className="flex-1 min-h-0 flex overflow-hidden max-w-7xl w-full mx-auto">
         {/* Left Column: WhatsApp Chat List (Visible always on desktop, hidden on mobile if trip open) */}
         <div
-          className={`w-full md:w-80 lg:w-96 flex-shrink-0 ${
+          className={`w-full md:w-80 lg:w-96 flex-shrink-0 min-h-0 h-full ${
             activeTripId ? 'hidden md:flex md:flex-col' : 'flex flex-col'
           }`}
         >
@@ -336,7 +339,7 @@ export const App: React.FC = () => {
 
         {/* Right Column: Active Trip Workspace (WhatsApp Group Workspace) */}
         <div
-          className={`flex-1 flex flex-col bg-[#0b141a] overflow-y-auto relative ${
+          className={`flex-1 min-h-0 flex flex-col bg-[#0b141a] overflow-hidden relative h-full ${
             !activeTripId ? 'hidden md:flex' : 'flex'
           }`}
         >
@@ -362,7 +365,7 @@ export const App: React.FC = () => {
           ) : (
             /* Active Trip Workspace - WhatsApp Group Chat Format */
             tripData && (
-              <div className="flex-1 flex flex-col relative h-full">
+              <div className="flex-1 min-h-0 flex flex-col relative h-full overflow-hidden">
                 {/* Trip Group Header */}
                 <TripWorkspaceHeader
                   trip={tripData}
@@ -375,7 +378,7 @@ export const App: React.FC = () => {
 
                 {/* Navigation sub-header when inside a specific detail view (Expenses, Itinerary, etc.) */}
                 {activeSection !== 'feed' && (
-                  <div className="bg-[#111b21] border-b border-slate-800/80 px-4 py-2 flex items-center justify-between text-xs text-slate-300">
+                  <div className="bg-[#111b21] border-b border-slate-800/80 px-4 py-2 flex items-center justify-between text-xs text-slate-300 flex-shrink-0">
                     <button
                       onClick={() => setActiveSection('feed')}
                       className="flex items-center gap-1.5 text-emerald-400 font-bold hover:underline"
@@ -389,9 +392,9 @@ export const App: React.FC = () => {
                 )}
 
                 {/* Main Content Area */}
-                <div className="flex-1 overflow-y-auto flex flex-col">
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
                   {activeSection === 'feed' && (
-                    <>
+                    <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
                       <ActivityFeed
                         activities={activities}
                         expenses={expenses}
@@ -420,100 +423,104 @@ export const App: React.FC = () => {
                         onSendMessage={handleSendMessage}
                         onSelectAction={handleSelectQuickAction}
                       />
-                    </>
+                    </div>
                   )}
 
                   {activeSection === 'expenses' && (
-                    <ExpensesView
-                      tripId={activeTripId}
-                      expenses={expenses}
-                      members={members}
-                      currentUser={user}
-                      openAddModal={autoOpenModalCategory === 'expenses'}
-                      onRefresh={() => {
-                        setAutoOpenModalCategory(null);
-                        loadWorkspaceData(activeTripId);
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <ExpensesView
+                        tripId={activeTripId}
+                        expenses={expenses}
+                        members={members}
+                        currentUser={user}
+                        onRefresh={() => {
+                          loadWorkspaceData(activeTripId);
+                        }}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'settlements' && (
-                    <SettlementSheet
-                      tripId={activeTripId}
-                      settlementsData={settlementsData}
-                      onRefresh={() => loadWorkspaceData(activeTripId)}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <SettlementSheet
+                        tripId={activeTripId}
+                        settlementsData={settlementsData}
+                        onRefresh={() => loadWorkspaceData(activeTripId)}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'itinerary' && (
-                    <ItineraryView
-                      tripId={activeTripId}
-                      items={itinerary}
-                      members={members}
-                      openAddModal={autoOpenModalCategory === 'itinerary'}
-                      onRefresh={() => {
-                        setAutoOpenModalCategory(null);
-                        loadWorkspaceData(activeTripId);
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <ItineraryView
+                        tripId={activeTripId}
+                        items={itinerary}
+                        members={members}
+                        onRefresh={() => {
+                          loadWorkspaceData(activeTripId);
+                        }}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'bookings' && (
-                    <BookingsView
-                      tripId={activeTripId}
-                      bookings={bookings}
-                      openAddModal={autoOpenModalCategory === 'bookings'}
-                      onRefresh={() => {
-                        setAutoOpenModalCategory(null);
-                        loadWorkspaceData(activeTripId);
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <BookingsView
+                        tripId={activeTripId}
+                        bookings={bookings}
+                        onRefresh={() => {
+                          loadWorkspaceData(activeTripId);
+                        }}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'budget' && (
-                    <BudgetView
-                      tripId={activeTripId}
-                      budgetData={budgetData}
-                      onRefresh={() => loadWorkspaceData(activeTripId)}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <BudgetView
+                        tripId={activeTripId}
+                        budgetData={budgetData}
+                        onRefresh={() => loadWorkspaceData(activeTripId)}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'tasks' && (
-                    <TasksView
-                      tripId={activeTripId}
-                      tasks={tasks}
-                      members={members}
-                      openAddModal={autoOpenModalCategory === 'tasks'}
-                      onRefresh={() => {
-                        setAutoOpenModalCategory(null);
-                        loadWorkspaceData(activeTripId);
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <TasksView
+                        tripId={activeTripId}
+                        tasks={tasks}
+                        members={members}
+                        onRefresh={() => {
+                          loadWorkspaceData(activeTripId);
+                        }}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'polls' && (
-                    <PollsView
-                      tripId={activeTripId}
-                      polls={polls}
-                      currentUser={user}
-                      openAddModal={autoOpenModalCategory === 'polls'}
-                      onRefresh={() => {
-                        setAutoOpenModalCategory(null);
-                        loadWorkspaceData(activeTripId);
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <PollsView
+                        tripId={activeTripId}
+                        polls={polls}
+                        currentUser={user}
+                        onRefresh={() => {
+                          loadWorkspaceData(activeTripId);
+                        }}
+                      />
+                    </div>
                   )}
 
                   {activeSection === 'documents' && (
-                    <DocumentsView
-                      tripId={activeTripId}
-                      documents={documents}
-                      openAddModal={autoOpenModalCategory === 'documents'}
-                      onRefresh={() => {
-                        setAutoOpenModalCategory(null);
-                        loadWorkspaceData(activeTripId);
-                      }}
-                    />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <DocumentsView
+                        tripId={activeTripId}
+                        documents={documents}
+                        onRefresh={() => {
+                          loadWorkspaceData(activeTripId);
+                        }}
+                      />
+                    </div>
                   )}
                 </div>
               </div>
@@ -615,6 +622,24 @@ export const App: React.FC = () => {
         isOpen={showNotifications}
         onClose={() => setShowNotifications(false)}
       />
+
+      {pendingJoinToken && (
+        <JoinInviteConfirmationModal
+          token={pendingJoinToken}
+          currentUser={user}
+          onJoined={(joinedTripId) => {
+            setPendingJoinToken(null);
+            window.history.replaceState({}, '', '/');
+            loadTrips();
+            setActiveTripId(joinedTripId);
+            setActiveSection('feed');
+          }}
+          onCancel={() => {
+            setPendingJoinToken(null);
+            window.history.replaceState({}, '', '/');
+          }}
+        />
+      )}
     </div>
   );
 };

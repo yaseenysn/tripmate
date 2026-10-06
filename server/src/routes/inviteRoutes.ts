@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
-import { Trip, TripInvite, TripMember } from '../models';
+import { Trip, TripInvite, TripMember, User } from '../models';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { requireTripMembership, requireTripAdmin, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
+import { sendInviteEmail } from '../services/emailService';
 
 const router = Router();
 
@@ -19,16 +20,119 @@ const generate6DigitCode = () => {
   return code;
 };
 
-// Create invite for trip (Admin only)
+// Helper to obtain the clean Frontend Base URL dynamically
+export const getFrontendBaseUrl = (req?: Request): string => {
+  if (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim()) {
+    const primaryUrl = process.env.FRONTEND_URL.split(',')[0].trim();
+    if (primaryUrl && primaryUrl !== '*') {
+      return primaryUrl.replace(/\/$/, '');
+    }
+  }
+
+  if (req && req.get('origin')) {
+    return req.get('origin')!.replace(/\/$/, '');
+  }
+
+  if (req) {
+    const host = req.get('host') || 'localhost:3001';
+    const protocol = req.protocol || 'http';
+    const adjustedHost = host.replace(':5000', ':3001');
+    return `${protocol}://${adjustedHost}`.replace(/\/$/, '');
+  }
+
+  return 'http://localhost:3001';
+};
+
+// Send Email Invitation to a user
+router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+  try {
+    const { tripId } = req.params;
+    const { email, message } = req.body;
+
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'Please provide a valid recipient email address' });
+    }
+
+    const targetEmail = email.trim().toLowerCase();
+
+    const trip = await Trip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({ error: 'Trip not found' });
+    }
+
+    const inviter = await User.findById(req.user!.userId);
+    const inviterName = inviter ? inviter.name : 'A TripMate Member';
+
+    // Check if a user with this email is already a member of this trip
+    const existingUser = await User.findOne({ email: targetEmail });
+    if (existingUser) {
+      const isAlreadyMember = await TripMember.findOne({ tripId, userId: existingUser._id });
+      if (isAlreadyMember) {
+        return res.status(400).json({ error: `User with email ${targetEmail} is already a member of this trip` });
+      }
+    }
+
+    // Generate unique token and 6-digit code
+    const token = crypto.randomBytes(24).toString('hex');
+    let code = generate6DigitCode();
+    while (await TripInvite.findOne({ code, isActive: true })) {
+      code = generate6DigitCode();
+    }
+
+    // Expiry: 7 days by default
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    const invite = await TripInvite.create({
+      tripId,
+      code,
+      token,
+      invitedEmail: targetEmail,
+      createdBy: req.user!.userId,
+      expiresAt,
+      usedCount: 0,
+      isActive: true
+    });
+
+    // Configurable Frontend Join Link
+    const frontendBaseUrl = getFrontendBaseUrl(req);
+    const inviteUrl = `${frontendBaseUrl}/join/${token}`;
+
+    // Send formatted Email
+    await sendInviteEmail({
+      toEmail: targetEmail,
+      inviterName,
+      tripName: trip.name,
+      inviteUrl,
+      message
+    });
+
+    await logActivity(tripId, req.user!.userId, 'INVITE_SENT', `sent email invitation to ${targetEmail}`);
+
+    res.status(201).json({
+      message: `Invitation sent successfully to ${targetEmail}`,
+      invite: {
+        _id: invite._id,
+        token: invite.token,
+        code: invite.code,
+        invitedEmail: invite.invitedEmail,
+        inviteUrl
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Error sending email invitation' });
+  }
+});
+
+// Create general invite link for trip (Admin only)
 router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
   try {
     const { tripId } = req.params;
     const { expiresAt, maxUses } = req.body;
 
-    const token = crypto.randomBytes(16).toString('hex');
+    const token = crypto.randomBytes(24).toString('hex');
     let code = generate6DigitCode();
 
-    // Ensure code uniqueness
     while (await TripInvite.findOne({ code, isActive: true })) {
       code = generate6DigitCode();
     }
@@ -44,7 +148,8 @@ router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, 
       isActive: true
     });
 
-    const inviteUrl = `${req.protocol}://${req.get('host')}/join/${token}`;
+    const frontendBaseUrl = getFrontendBaseUrl(req);
+    const inviteUrl = `${frontendBaseUrl}/join/${token}`;
     const qrCodeDataUrl = await QRCode.toDataURL(inviteUrl);
 
     res.status(201).json({
@@ -60,14 +165,16 @@ router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, 
 });
 
 // List invites for trip (Admin only)
-router.get('/trips/:tripId/invites', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
+router.get('/trips/:tripId/invites', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
   try {
     const { tripId } = req.params;
     const invites = await TripInvite.find({ tripId, isActive: true }).sort({ createdAt: -1 });
 
+    const frontendBaseUrl = getFrontendBaseUrl(req);
+
     const enriched = await Promise.all(
       invites.map(async (inv) => {
-        const inviteUrl = `${req.protocol}://${req.get('host')}/join/${inv.token}`;
+        const inviteUrl = `${frontendBaseUrl}/join/${inv.token}`;
         const qrCodeDataUrl = await QRCode.toDataURL(inviteUrl);
         return {
           ...inv.toObject(),
@@ -119,11 +226,12 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'This invite link has reached maximum usage limit' });
     }
 
-    const trip = await Trip.findById(invite.tripId).populate('createdBy', 'name avatar');
+    const trip = await Trip.findById(invite.tripId).populate('createdBy', 'name email avatar');
     if (!trip) {
       return res.status(404).json({ error: 'Associated trip not found' });
     }
 
+    const inviter = await User.findById(invite.createdBy).select('name email avatar');
     const memberCount = await TripMember.countDocuments({ tripId: trip._id });
 
     res.json({
@@ -138,9 +246,14 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
         createdBy: trip.createdBy,
         memberCount
       },
+      inviter: {
+        name: inviter ? inviter.name : 'A trip member',
+        email: inviter ? inviter.email : ''
+      },
       invite: {
         code: invite.code,
-        token: invite.token
+        token: invite.token,
+        invitedEmail: invite.invitedEmail
       }
     });
   } catch (error: any) {
@@ -148,7 +261,7 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
   }
 });
 
-// Join trip via token
+// Join trip via token (Must be authenticated)
 router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { token } = req.params;
@@ -187,6 +300,18 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
 
     invite.usedCount += 1;
     await invite.save();
+
+    // Socket real-time broadcast to trip room
+    const io = req.app.get('socketio');
+    if (io) {
+      io.to(`trip_${trip._id.toString()}`).emit('member.joined', {
+        userId,
+        tripId: trip._id.toString()
+      });
+      io.to(`trip_${trip._id.toString()}`).emit('activity.created', {
+        tripId: trip._id.toString()
+      });
+    }
 
     await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `joined the trip via invite link`);
     await createNotification(userId, 'Joined Trip', `You joined "${trip.name}"`, 'TRIP', trip._id.toString());
@@ -240,6 +365,18 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
 
     invite.usedCount += 1;
     await invite.save();
+
+    // Socket real-time broadcast
+    const io = req.app.get('socketio');
+    if (io) {
+      io.to(`trip_${trip._id.toString()}`).emit('member.joined', {
+        userId,
+        tripId: trip._id.toString()
+      });
+      io.to(`trip_${trip._id.toString()}`).emit('activity.created', {
+        tripId: trip._id.toString()
+      });
+    }
 
     await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `joined the trip using code ${cleanCode}`);
     await createNotification(userId, 'Joined Trip', `You joined "${trip.name}"`, 'TRIP', trip._id.toString());

@@ -26,7 +26,7 @@ export const WhatsAppHeader: React.FC<WhatsAppHeaderProps> = ({
   const [showSearchInput, setShowSearchInput] = useState(false);
 
   return (
-    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 px-4 py-3">
+    <header className="bg-slate-900 border-b border-slate-800 flex-shrink-0 px-4 py-3">
       <div className="flex items-center justify-between gap-3 max-w-7xl mx-auto">
         {/* App Branding */}
         <div className="flex items-center gap-2.5">

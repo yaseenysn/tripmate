@@ -75,6 +75,11 @@ export const apiDeleteTrip = (tripId: string) =>
   request(`/trips/${tripId}`, { method: 'DELETE' });
 
 // Invites
+export const apiSendEmailInvite = (tripId: string, email: string, message?: string) =>
+  request(`/trips/${tripId}/invites/email`, {
+    method: 'POST',
+    body: JSON.stringify({ email, message })
+  });
 export const apiCreateInvite = (tripId: string, options?: any) =>
   request(`/trips/${tripId}/invites`, { method: 'POST', body: JSON.stringify(options || {}) });
 export const apiGetInvites = (tripId: string) => request(`/trips/${tripId}/invites`);

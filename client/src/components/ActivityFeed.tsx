@@ -125,7 +125,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
 
   return (
     <div
-      className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4 pb-28 min-h-full"
+      className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4 pb-6"
       style={{
         backgroundColor: '#0b141a',
         backgroundImage: `radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 0)`,

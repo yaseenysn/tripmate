@@ -7,7 +7,7 @@ import {
 interface WhatsAppComposerProps {
   onSendMessage: (message: string) => void;
   onSelectAction: (
-    actionType: 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
+    actionType: 'PHOTO' | 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
   ) => void;
 }
 
@@ -39,7 +39,7 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
   };
 
   const handleActionClick = (
-    type: 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
+    type: 'PHOTO' | 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
   ) => {
     setShowAttachmentMenu(false);
     onSelectAction(type);
@@ -91,7 +91,7 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
   ];
 
   return (
-    <div className="sticky bottom-0 z-30 bg-[#111b21] border-t border-slate-800/80 px-3 py-2.5 flex flex-col items-center select-none">
+    <div className="flex-shrink-0 relative z-30 bg-[#111b21] border-t border-slate-800/80 px-3 py-2.5 flex flex-col items-center select-none">
       {/* WhatsApp Attachment Action Sheet Popup */}
       {showAttachmentMenu && (
         <div
@@ -111,10 +111,7 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
           <div className="grid grid-cols-3 gap-3">
             {/* Camera / Photo Option */}
             <button
-              onClick={() => {
-                setShowAttachmentMenu(false);
-                alert('Photo upload integration ready!');
-              }}
+              onClick={() => handleActionClick('PHOTO')}
               className="flex flex-col items-center justify-center p-2.5 rounded-xl hover:bg-slate-800/80 transition-colors group"
             >
               <div className="w-10 h-10 rounded-full bg-pink-600 hover:bg-pink-500 flex items-center justify-center text-white shadow-md mb-1.5 transition-transform group-hover:scale-105">

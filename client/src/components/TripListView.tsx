@@ -32,9 +32,9 @@ export const TripListView: React.FC<TripListViewProps> = ({
   });
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800/80 select-none">
+    <div className="flex flex-col h-full min-h-0 bg-slate-900 border-r border-slate-800/80 select-none">
       {/* Search Bar */}
-      <div className="p-3 border-b border-slate-800/80">
+      <div className="p-3 border-b border-slate-800/80 flex-shrink-0">
         <div className="relative flex items-center">
           <input
             type="text"
@@ -48,7 +48,7 @@ export const TripListView: React.FC<TripListViewProps> = ({
       </div>
 
       {/* Action Buttons Header */}
-      <div className="px-3 py-2 border-b border-slate-800/60 flex items-center justify-between text-xs text-slate-400 font-semibold uppercase tracking-wider">
+      <div className="px-3 py-2 border-b border-slate-800/60 flex items-center justify-between text-xs text-slate-400 font-semibold uppercase tracking-wider flex-shrink-0">
         <span>My Trips ({filteredTrips.length})</span>
         <div className="flex items-center gap-2">
           <button
@@ -69,7 +69,7 @@ export const TripListView: React.FC<TripListViewProps> = ({
       </div>
 
       {/* Trip Rows (WhatsApp Chat List Style) */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/40">
+      <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-800/40">
         {filteredTrips.length === 0 ? (
           <div className="p-8 text-center space-y-3">
             <Compass className="w-10 h-10 text-slate-600 mx-auto animate-pulse" />

@@ -79,6 +79,7 @@ export interface ITripInvite extends Document {
   code: string;
   token: string;
   createdBy: mongoose.Types.ObjectId;
+  invitedEmail?: string;
   expiresAt?: Date;
   maxUses?: number;
   usedCount: number;
@@ -91,6 +92,7 @@ const TripInviteSchema = new Schema<ITripInvite>({
   code: { type: String, required: true, unique: true },
   token: { type: String, required: true, unique: true },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  invitedEmail: { type: String, lowercase: true, trim: true },
   expiresAt: { type: Date },
   maxUses: { type: Number },
   usedCount: { type: Number, default: 0 },
