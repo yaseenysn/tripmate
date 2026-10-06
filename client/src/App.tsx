@@ -41,6 +41,7 @@ import {
   apiJoinWithToken, apiDeleteExpense, apiDeleteTrip
 } from './services/api';
 import { joinTripRoom, leaveTripRoom, getSocket } from './services/socket';
+import { getTripCache, setTripCache, updateTripCacheItem, clearTripCache } from './services/tripCache';
 import { Compass, MessageSquare } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -135,13 +136,37 @@ export const App: React.FC = () => {
     if (user) loadTrips();
   }, [user]);
 
-  // Load Active Trip Workspace Payload
-  const loadWorkspaceData = async (tId: string) => {
+  // Load Active Trip Workspace Payload (with In-Memory Caching & Non-blocking Background Sync)
+  const loadWorkspaceData = async (tId: string, isBackground = false) => {
+    if (!tId) return;
+
+    if (!isBackground) {
+      // 1. Check in-memory trip cache
+      const cached = getTripCache(tId);
+      if (cached) {
+        // CACHE HIT: Instantly restore cached dataset to UI state (0ms latency!)
+        setTripData(cached.trip);
+        setMembers(cached.members || []);
+        setExpenses(cached.expenses || []);
+        setBudgetData(cached.budget || null);
+        setItinerary(cached.itinerary || []);
+        setBookings(cached.bookings || []);
+        setSettlementsData(cached.settlements || null);
+        setTasks(cached.tasks || []);
+        setPolls(cached.polls || []);
+        setDocuments(cached.documents || []);
+        setActivities(cached.activities || []);
+
+        // Trigger background refresh to fetch fresh data without blocking the UI
+        loadWorkspaceData(tId, true);
+        return;
+      }
+    } else {
+      console.log(`[TripCache] Background refresh ${tId}`);
+    }
+
     try {
       const detailsRes = await apiGetTripDetails(tId);
-      setTripData(detailsRes.trip);
-      setMembers(detailsRes.members || []);
-
       const [expRes, budRes, itinRes, bookRes, setRes, taskRes, pollRes, docRes, actRes, notifRes] =
         await Promise.all([
           apiGetExpenses(tId),
@@ -156,18 +181,42 @@ export const App: React.FC = () => {
           apiGetNotifications().catch(() => ({ notifications: [] })),
         ]);
 
-      setExpenses(expRes.expenses || []);
-      setBudgetData(budRes || null);
-      setItinerary(itinRes.items || []);
-      setBookings(bookRes.bookings || []);
-      setSettlementsData(setRes || null);
-      setTasks(taskRes.tasks || []);
-      setPolls(pollRes.polls || []);
-      setDocuments(docRes.documents || []);
-      setActivities(actRes.activities || []);
-      setNotifications(notifRes.notifications || []);
+      const workspacePayload = {
+        trip: detailsRes.trip,
+        members: detailsRes.members || [],
+        expenses: expRes.expenses || [],
+        budget: budRes || null,
+        itinerary: itinRes.items || [],
+        bookings: bookRes.bookings || [],
+        settlements: setRes || null,
+        tasks: taskRes.tasks || [],
+        polls: pollRes.polls || [],
+        documents: docRes.documents || [],
+        activities: actRes.activities || [],
+      };
+
+      // Update in-memory cache
+      setTripCache(tId, workspacePayload);
+
+      // Apply fresh data to React state
+      setTripData(workspacePayload.trip);
+      setMembers(workspacePayload.members);
+      setExpenses(workspacePayload.expenses);
+      setBudgetData(workspacePayload.budget);
+      setItinerary(workspacePayload.itinerary);
+      setBookings(workspacePayload.bookings);
+      setSettlementsData(workspacePayload.settlements);
+      setTasks(workspacePayload.tasks);
+      setPolls(workspacePayload.polls);
+      setDocuments(workspacePayload.documents);
+      setActivities(workspacePayload.activities);
+
+      if (notifRes.notifications) {
+        setNotifications(notifRes.notifications);
+      }
     } catch (err) {
-      console.error('Error loading workspace:', err);
+      console.error('[Workspace] Error loading workspace data:', err);
+      // On background refresh failure, keep cached UI intact
     }
   };
 
@@ -179,34 +228,31 @@ export const App: React.FC = () => {
 
       const socket = getSocket();
 
-      // Realtime Activity / Message handler - Updates feed instantly without 10 HTTP requests!
+      // Realtime Activity / Message handler
       const handleActivityCreated = (newActivity: any) => {
         const receivedTime = Date.now();
-        console.log(`[Chat] [Socket Event] Received activity.created for trip ${newActivity.tripId} at ${receivedTime}:`, newActivity);
+        console.log(`[Chat] [Socket Event] Received activity.created for trip at ${receivedTime}:`, newActivity);
 
-        const targetTripId = newActivity.tripId?._id || newActivity.tripId;
-        if (targetTripId !== activeTripId) return;
+        const targetTripId = String(newActivity.tripId?._id || newActivity.tripId || '');
 
-        setActivities((prev) => {
+        // Update in-memory cache for target trip
+        updateTripCacheItem(targetTripId, 'activities', (prev = []) => {
           const clientMsgId = newActivity.metadata?.clientMessageId;
-
-          // Check if activity already exists or matches optimistic pending message
           const exists = prev.some((a) => {
-            if (a._id === newActivity._id) return true;
+            if (String(a._id) === String(newActivity._id)) return true;
             if (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) return true;
             if (a.isPending && a.description === newActivity.description) {
-              const prevUser = a.userId?._id || a.userId?.id || a.userId;
-              const newUser = newActivity.userId?._id || newActivity.userId?.id || newActivity.userId;
-              if (prevUser === newUser) return true;
+              const prevUser = String(a.userId?._id || a.userId?.id || a.userId || '');
+              const newUser = String(newActivity.userId?._id || newActivity.userId?.id || newActivity.userId || '');
+              if (prevUser && prevUser === newUser) return true;
             }
             return false;
           });
 
           if (exists) {
-            // Replace temporary/pending message with authoritative server activity
             return prev.map((a) => {
               if (
-                a._id === newActivity._id ||
+                String(a._id) === String(newActivity._id) ||
                 (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) ||
                 (a.isPending && a.description === newActivity.description)
               ) {
@@ -215,15 +261,44 @@ export const App: React.FC = () => {
               return a;
             });
           }
-
-          // Otherwise append new activity directly
           return [...prev, newActivity];
         });
+
+        // Update UI state if currently viewing active trip
+        if (targetTripId === String(activeTripId)) {
+          setActivities((prev) => {
+            const clientMsgId = newActivity.metadata?.clientMessageId;
+            const exists = prev.some((a) => {
+              if (String(a._id) === String(newActivity._id)) return true;
+              if (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) return true;
+              if (a.isPending && a.description === newActivity.description) {
+                const prevUser = String(a.userId?._id || a.userId?.id || a.userId || '');
+                const newUser = String(newActivity.userId?._id || newActivity.userId?.id || newActivity.userId || '');
+                if (prevUser && prevUser === newUser) return true;
+              }
+              return false;
+            });
+
+            if (exists) {
+              return prev.map((a) => {
+                if (
+                  String(a._id) === String(newActivity._id) ||
+                  (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) ||
+                  (a.isPending && a.description === newActivity.description)
+                ) {
+                  return newActivity;
+                }
+                return a;
+              });
+            }
+            return [...prev, newActivity];
+          });
+        }
       };
 
       const handleWorkspaceSync = () => {
-        // Sync non-chat features (Expenses, Itinerary, Bookings, Tasks, Polls, Settlements)
-        loadWorkspaceData(activeTripId);
+        // Non-blocking background sync for active workspace
+        loadWorkspaceData(activeTripId, true);
       };
 
       socket.on('activity.created', handleActivityCreated);
@@ -259,6 +334,7 @@ export const App: React.FC = () => {
 
   const handleLogout = () => {
     removeAuthToken();
+    clearTripCache();
     setUser(null);
     setActiveTripId(null);
   };

@@ -14,6 +14,9 @@ export const getSocket = () => {
 
     socket = io(rawUrl, {
       autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
       transports: ['websocket', 'polling']
     });
 
@@ -28,26 +31,42 @@ export const getSocket = () => {
     socket.on('disconnect', (reason) => {
       console.warn(`[Socket.IO Client] Disconnected: ${reason}`);
     });
+
+    socket.on('connect_error', (err) => {
+      console.error(`[Socket.IO Client] Connect error:`, err.message);
+    });
   }
   return socket;
 };
 
 export const joinTripRoom = (tripId: string) => {
-  currentJoinedRoom = tripId;
+  if (!tripId) return;
+  const cleanTripId = String(tripId).trim();
+
+  if (currentJoinedRoom && currentJoinedRoom !== cleanTripId) {
+    leaveTripRoom(currentJoinedRoom);
+  }
+
+  currentJoinedRoom = cleanTripId;
   const s = getSocket();
+
   if (s.connected) {
-    s.emit('join_trip', tripId);
-    console.log(`[Socket.IO Client] Emitted join_trip for: ${tripId}`);
+    s.emit('join_trip', cleanTripId);
+    console.log(`[Socket.IO Client] Emitted join_trip for room: trip_${cleanTripId}`);
+  } else {
+    console.log(`[Socket.IO Client] Socket connecting... Queued join_trip for room: trip_${cleanTripId}`);
   }
 };
 
 export const leaveTripRoom = (tripId: string) => {
-  if (currentJoinedRoom === tripId) {
+  if (!tripId) return;
+  const cleanTripId = String(tripId).trim();
+  if (currentJoinedRoom === cleanTripId) {
     currentJoinedRoom = null;
   }
   const s = getSocket();
   if (s.connected) {
-    s.emit('leave_trip', tripId);
-    console.log(`[Socket.IO Client] Emitted leave_trip for: ${tripId}`);
+    s.emit('leave_trip', cleanTripId);
+    console.log(`[Socket.IO Client] Emitted leave_trip for room: trip_${cleanTripId}`);
   }
 };
