@@ -9,13 +9,15 @@ export const initSocket = (io: SocketIOServer) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
     socket.on('join_trip', (tripId: string) => {
-      socket.join(`trip_${tripId}`);
-      console.log(`[Socket.IO] Socket ${socket.id} joined trip room trip_${tripId}`);
+      const room = `trip_${tripId}`;
+      socket.join(room);
+      console.log(`[Socket.IO] Socket ${socket.id} joined trip room ${room}`);
     });
 
     socket.on('leave_trip', (tripId: string) => {
-      socket.leave(`trip_${tripId}`);
-      console.log(`[Socket.IO] Socket ${socket.id} left trip room trip_${tripId}`);
+      const room = `trip_${tripId}`;
+      socket.leave(room);
+      console.log(`[Socket.IO] Socket ${socket.id} left trip room ${room}`);
     });
 
     socket.on('disconnect', () => {

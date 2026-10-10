@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 let socket: Socket | null = null;
 let currentJoinedRoom: string | null = null;
 
-export const getSocket = () => {
+export const getSocket = (): Socket => {
   if (!socket) {
     const rawUrl = (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000')
       .trim()
@@ -20,11 +20,12 @@ export const getSocket = () => {
       transports: ['websocket', 'polling']
     });
 
+    // Register ONE global 'connect' handler on socket creation for connect & reconnect
     socket.on('connect', () => {
       console.log(`[Socket.IO Client] Connected with ID: ${socket?.id}`);
       if (currentJoinedRoom) {
         socket?.emit('join_trip', currentJoinedRoom);
-        console.log(`[Socket.IO Client] Re-joined room trip_${currentJoinedRoom} on connect`);
+        console.log(`[Socket.IO Client] Auto re-joined room: trip_${currentJoinedRoom}`);
       }
     });
 
@@ -43,6 +44,7 @@ export const joinTripRoom = (tripId: string) => {
   if (!tripId) return;
   const cleanTripId = String(tripId).trim();
 
+  // If changing trips, leave previous room
   if (currentJoinedRoom && currentJoinedRoom !== cleanTripId) {
     leaveTripRoom(currentJoinedRoom);
   }
@@ -54,7 +56,7 @@ export const joinTripRoom = (tripId: string) => {
     s.emit('join_trip', cleanTripId);
     console.log(`[Socket.IO Client] Emitted join_trip for room: trip_${cleanTripId}`);
   } else {
-    console.log(`[Socket.IO Client] Socket connecting... Queued join_trip for room: trip_${cleanTripId}`);
+    console.log(`[Socket.IO Client] Queued room join for connect event: trip_${cleanTripId}`);
   }
 };
 
@@ -64,9 +66,8 @@ export const leaveTripRoom = (tripId: string) => {
   if (currentJoinedRoom === cleanTripId) {
     currentJoinedRoom = null;
   }
-  const s = getSocket();
-  if (s.connected) {
-    s.emit('leave_trip', cleanTripId);
+  if (socket && socket.connected) {
+    socket.emit('leave_trip', cleanTripId);
     console.log(`[Socket.IO Client] Emitted leave_trip for room: trip_${cleanTripId}`);
   }
 };
