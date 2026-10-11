@@ -6,14 +6,16 @@ export const initSocket = (io: SocketIOServer) => {
   ioInstance = io;
 
   io.on('connection', (socket: Socket) => {
-    console.log(`[RTCHAT] socket_connected socketId=${socket.id}`);
+    console.log(`[RTCHAT] CLIENT_CONNECTED socketId=${socket.id}`);
 
-    socket.on('join_trip', (tripId: string, ackCallback?: (res: any) => void) => {
+    socket.on('join_trip', async (tripId: string, ackCallback?: (res: any) => void) => {
       const cleanTripId = String(tripId).trim();
       const room = `trip_${cleanTripId}`;
-      socket.join(room);
+      console.log(`[RTCHAT] JOIN_REQUEST socketId=${socket.id} tripId=${cleanTripId} room=${room}`);
+      
+      await socket.join(room);
       const roomSocketCount = ioInstance?.sockets.adapter.rooms.get(room)?.size || 0;
-      console.log(`[RTCHAT] socket_joined_room socketId=${socket.id} room=${room} count=${roomSocketCount}`);
+      console.log(`[RTCHAT] JOIN_CONFIRMED socketId=${socket.id} room=${room} count=${roomSocketCount}`);
       
       const payload = { tripId: cleanTripId, room, socketId: socket.id, roomSocketCount };
       socket.emit('trip_room_joined', payload);
@@ -22,15 +24,15 @@ export const initSocket = (io: SocketIOServer) => {
       }
     });
 
-    socket.on('leave_trip', (tripId: string) => {
+    socket.on('leave_trip', async (tripId: string) => {
       const cleanTripId = String(tripId).trim();
       const room = `trip_${cleanTripId}`;
-      socket.leave(room);
-      console.log(`[Socket.IO] Socket ${socket.id} left trip room ${room}`);
+      await socket.leave(room);
+      console.log(`[RTCHAT] LEAVE_CONFIRMED socketId=${socket.id} room=${room}`);
     });
 
     socket.on('disconnect', () => {
-      console.log(`[Socket.IO] Client disconnected: ${socket.id}`);
+      console.log(`[RTCHAT] DISCONNECTED socketId=${socket.id}`);
     });
   });
 };
@@ -41,10 +43,10 @@ export const emitToTrip = (tripId: string, event: string, payload: any) => {
     const targetRoom = `trip_${cleanTripId}`;
     const roomSocketCount = ioInstance.sockets.adapter.rooms.get(targetRoom)?.size || 0;
     
-    console.log(`[RTCHAT] emitting_activity_created event=${event}`);
-    console.log(`[RTCHAT] trip_id=${cleanTripId}`);
-    console.log(`[RTCHAT] target_room=${targetRoom}`);
-    console.log(`[RTCHAT] room_socket_count=${roomSocketCount}`);
+    console.log(`[RTCHAT] SOCKET_EMIT event=${event}`);
+    console.log(`[RTCHAT] TRIP_ID ${cleanTripId}`);
+    console.log(`[RTCHAT] ROOM_NAME ${targetRoom}`);
+    console.log(`[RTCHAT] ROOM_SOCKET_COUNT ${roomSocketCount}`);
 
     ioInstance.to(targetRoom).emit(event, payload);
   }

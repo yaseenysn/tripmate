@@ -17,7 +17,7 @@ export const logActivity = async (
       metadata
     });
 
-    console.log(`[RTCHAT] activity_saved activityId=${activity._id} tripId=${tripId}`);
+    console.log(`[RTCHAT] DB_SAVE_SUCCESS activityId=${activity._id} tripId=${tripId}`);
 
     const populated = await Activity.findById(activity._id).populate('userId', 'name avatar email');
 

@@ -210,7 +210,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
             {group.items.map((streamItem, i) => {
               const act = streamItem.data;
               if (act._id) {
-                console.log(`[RTCHAT] message_rendered activityId=${act._id}`);
+                console.log(`[RTCHAT] MESSAGE_RENDERED activityId=${act._id}`);
               }
               const sender = act.userId || {};
               const senderId = sender._id || sender.id;

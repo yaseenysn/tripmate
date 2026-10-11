@@ -326,6 +326,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (activeTripId) {
+      console.log(`[RTCHAT] ACTIVE_TRIP_ID ${activeTripId}`);
       joinTripRoom(activeTripId);
       loadWorkspaceData(activeTripId);
       setActiveSection('feed');
@@ -337,8 +338,8 @@ export const App: React.FC = () => {
         const targetTripId = String(newActivity.tripId?._id || newActivity.tripId || '').trim();
         const activeIdNormalized = String(activeTripId || '').trim();
 
-        console.log(`[RTCHAT] activity_created_received activityId=${newActivity._id} desc="${newActivity.description}"`);
-        console.log(`[RTCHAT] activity_trip_id target=${targetTripId} active=${activeIdNormalized}`);
+        console.log(`[RTCHAT] EVENT_RECEIVED activityId=${newActivity._id} desc="${newActivity.description}"`);
+        console.log(`[RTCHAT] EVENT_TRIP_ID target=${targetTripId} active=${activeIdNormalized}`);
 
         // Update trip list for ALL trips (active or non-active)
         setTrips((prev) =>
@@ -362,7 +363,7 @@ export const App: React.FC = () => {
         if (targetTripId === activeIdNormalized) {
           setActivities((prev) => {
             const nextState = mergeActivities(prev, [newActivity]);
-            console.log(`[RTCHAT] react_state_updated totalActivities=${nextState.length} addedOrUpdatedId=${newActivity._id}`);
+            console.log(`[RTCHAT] STATE_UPDATED totalActivities=${nextState.length} id=${newActivity._id}`);
             return nextState;
           });
         }

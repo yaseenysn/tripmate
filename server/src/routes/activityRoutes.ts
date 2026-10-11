@@ -32,7 +32,7 @@ router.post('/:id/activity', authenticateToken, requireTripMembership, async (re
       return res.status(400).json({ error: 'Message content is required' });
     }
 
-    console.log(`[RTCHAT] message_request_received tripId=${tripId} userId=${userId} clientMessageId=${clientMessageId}`);
+    console.log(`[RTCHAT] API_REQUEST_RECEIVED tripId=${tripId} userId=${userId} clientMessageId=${clientMessageId}`);
 
     const startTime = Date.now();
     const { logActivity } = require('../services/activityService');
@@ -44,7 +44,7 @@ router.post('/:id/activity', authenticateToken, requireTripMembership, async (re
       clientMessageId ? { clientMessageId } : undefined
     );
 
-    console.log(`[Backend Chat] Saved activity in ${Date.now() - startTime}ms. ID: ${activity?._id}`);
+    console.log(`[RTCHAT] API_RESPONSE_PREPARED activityId=${activity?._id} in ${Date.now() - startTime}ms`);
 
     res.status(201).json({ activity });
   } catch (error: any) {
