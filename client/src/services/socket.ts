@@ -4,26 +4,33 @@ let socket: Socket | null = null;
 let currentJoinedRoom: string | null = null;
 
 const resolveSocketUrl = (): string => {
-  // 1. Use a valid, non-empty VITE_SOCKET_URL (normalized without trailing slashes or /api)
-  const envSocket = import.meta.env.VITE_SOCKET_URL;
-  if (envSocket && typeof envSocket === 'string' && envSocket.trim()) {
-    const cleanSocket = envSocket.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '');
-    if (cleanSocket) return cleanSocket;
-  }
-
-  // 2. Otherwise, derive the Socket.IO base URL from VITE_API_URL by removing a trailing /api
-  const envApi = import.meta.env.VITE_API_URL;
-  if (envApi && typeof envApi === 'string' && envApi.trim()) {
-    const cleanApi = envApi.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '');
-    if (cleanApi) return cleanApi;
-  }
-
   const isBrowser = typeof window !== 'undefined';
   const hostname = isBrowser ? window.location.hostname : '';
   const isLocalDev =
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
     /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+
+  // 1. Use a valid, non-empty VITE_SOCKET_URL (normalized without trailing slashes or /api)
+  // Use localhost ONLY when frontend is actually running on localhost or 127.0.0.1 in development
+  const envSocket = import.meta.env.VITE_SOCKET_URL;
+  if (envSocket && typeof envSocket === 'string' && envSocket.trim()) {
+    const cleanSocket = envSocket.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '');
+    const isSocketLocal = cleanSocket.includes('localhost') || cleanSocket.includes('127.0.0.1');
+    if (cleanSocket && (!isSocketLocal || isLocalDev)) {
+      return cleanSocket;
+    }
+  }
+
+  // 2. Otherwise, derive the Socket.IO base URL from VITE_API_URL by removing a trailing /api
+  const envApi = import.meta.env.VITE_API_URL;
+  if (envApi && typeof envApi === 'string' && envApi.trim()) {
+    const cleanApi = envApi.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '');
+    const isApiLocal = cleanApi.includes('localhost') || cleanApi.includes('127.0.0.1');
+    if (cleanApi && (!isApiLocal || isLocalDev)) {
+      return cleanApi;
+    }
+  }
 
   // 3. Use localhost:5000 ONLY when the frontend is actually running on localhost or 127.0.0.1 in development
   if (isLocalDev) {
