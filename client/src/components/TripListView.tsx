@@ -101,7 +101,10 @@ export const TripListView: React.FC<TripListViewProps> = ({
             };
 
             const emoji = getDestinationEmoji(trip.destination);
-            const latestActivityText = trip.lastActivityText || `Created ${startDateStr} – ${endDateStr}`;
+            const latestActivityText =
+              trip.lastActivity?.description ||
+              trip.lastActivityText ||
+              `Created ${startDateStr} – ${endDateStr}`;
 
             return (
               <div

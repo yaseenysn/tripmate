@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { WhatsAppHeader } from './components/WhatsAppHeader';
 import { TripListView } from './components/TripListView';
 import { TripWorkspaceHeader } from './components/TripWorkspaceHeader';
@@ -41,8 +41,8 @@ import {
   apiJoinWithToken, apiDeleteExpense, apiDeleteTrip
 } from './services/api';
 import { joinTripRoom, leaveTripRoom, getSocket } from './services/socket';
-import { getTripCache, setTripCache, updateTripCacheItem, clearTripCache } from './services/tripCache';
-import { Compass, MessageSquare } from 'lucide-react';
+import { getTripCache, setTripCache, updateTripCacheItem, clearTripCache, deleteTripCache } from './services/tripCache';
+import { Compass, MessageSquare, AlertCircle } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
@@ -51,6 +51,10 @@ export const App: React.FC = () => {
   const [activeSection, setActiveSection] = useState<string>('feed');
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingJoinToken, setPendingJoinToken] = useState<string | null>(null);
+
+  // Active Trip Race-Condition & Sequencing Controls
+  const activeTripIdRef = useRef<string | null>(null);
+  const loadSeqRef = useRef<number>(0);
 
   // Workspace State
   const [tripData, setTripData] = useState<any>(null);
@@ -65,6 +69,8 @@ export const App: React.FC = () => {
   const [documents, setDocuments] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   // Modals / Drawers
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -78,6 +84,11 @@ export const App: React.FC = () => {
   const [paySplitInfo, setPaySplitInfo] = useState<{ expense: any; userShare: number; payerName: string } | null>(null);
   const [autoOpenModalCategory, setAutoOpenModalCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Synchronize ref on activeTripId change
+  useEffect(() => {
+    activeTripIdRef.current = activeTripId;
+  }, [activeTripId]);
 
   // Verify JWT session on load
   const initializeAuth = async () => {
@@ -167,6 +178,7 @@ export const App: React.FC = () => {
       if (activeTripId !== id && window.location.pathname !== `/trips/${id}`) {
         window.history.pushState({ tripId: id }, '', `/trips/${id}`);
       }
+      activeTripIdRef.current = id;
       setActiveTripId(id);
       setActiveSection('feed');
       // Clear unread count for selected trip locally
@@ -181,14 +193,21 @@ export const App: React.FC = () => {
       if (window.location.pathname.startsWith('/trips/')) {
         window.history.pushState({}, '', '/');
       }
+      activeTripIdRef.current = null;
       setActiveTripId(null);
     }
   };
 
   // Helper function to safely merge existing activities with incoming activities (from API or socket)
-  // Prevents overwriting real-time socket events or optimistic updates with stale REST API responses
-  const mergeActivities = (existing: any[], incoming: any[]) => {
+  // Scoped strictly to targetTripId to prevent chat data leaking between trips!
+  const mergeActivities = (existing: any[], incoming: any[], targetTripId?: string) => {
     const map = new Map<string, any>();
+
+    const isMatchTrip = (act: any) => {
+      if (!targetTripId) return true;
+      const actTripId = String(act.tripId?._id || act.tripId || '').trim();
+      return !actTripId || actTripId === String(targetTripId).trim();
+    };
 
     const getKey = (act: any) => {
       if (act._id) return String(act._id);
@@ -198,11 +217,13 @@ export const App: React.FC = () => {
     };
 
     existing.forEach((act) => {
+      if (!isMatchTrip(act)) return;
       const key = getKey(act);
       if (key) map.set(key, act);
     });
 
     incoming.forEach((act) => {
+      if (!isMatchTrip(act)) return;
       const key = getKey(act);
       const clientMsgId = act.clientMessageId || act.metadata?.clientMessageId;
 
@@ -236,15 +257,17 @@ export const App: React.FC = () => {
     return merged;
   };
 
-  // Load Active Trip Workspace Payload (with In-Memory Caching & Non-blocking Background Sync)
+  // Load Active Trip Workspace Payload (with In-Memory Caching, Race-Condition Guards & Non-blocking Background Sync)
   const loadWorkspaceData = async (tId: string, isBackground = false) => {
     if (!tId) return;
+    activeTripIdRef.current = tId;
+    const currentSeq = ++loadSeqRef.current;
 
     if (!isBackground) {
       // 1. Check in-memory trip cache
       const cached = getTripCache(tId);
       if (cached) {
-        // CACHE HIT: Instantly restore cached dataset to UI state (0ms latency!)
+        // CACHE HIT: Instantly restore isolated cached dataset to UI state
         setTripData(cached.trip);
         setMembers(cached.members || []);
         setExpenses(cached.expenses || []);
@@ -255,37 +278,66 @@ export const App: React.FC = () => {
         setTasks(cached.tasks || []);
         setPolls(cached.polls || []);
         setDocuments(cached.documents || []);
-        setActivities((prev) => mergeActivities(prev, cached.activities || []));
+        // Strictly filter cached activities to this trip only!
+        setActivities(
+          (cached.activities || []).filter(
+            (a: any) => !a.tripId || String(a.tripId?._id || a.tripId) === tId
+          )
+        );
+        setWorkspaceLoading(false);
+        setWorkspaceError(null);
 
         // Trigger background refresh to fetch fresh data without blocking the UI
         loadWorkspaceData(tId, true);
         return;
+      } else {
+        // CACHE MISS: Immediately isolate state so previous trip data NEVER leaks into new trip!
+        const initialTrip = trips.find((t) => t._id === tId) || null;
+        setTripData(initialTrip);
+        setMembers([]);
+        setExpenses([]);
+        setBudgetData(null);
+        setItinerary([]);
+        setBookings([]);
+        setSettlementsData(null);
+        setTasks([]);
+        setPolls([]);
+        setDocuments([]);
+        setActivities([]);
+        setWorkspaceLoading(true);
+        setWorkspaceError(null);
       }
     } else {
       console.log(`[TripCache] Background refresh ${tId}`);
     }
 
+    const safeFetch = async <T,>(promise: Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await promise;
+      } catch {
+        return fallback;
+      }
+    };
+
     try {
       const detailsRes = await apiGetTripDetails(tId);
       const [expRes, budRes, itinRes, bookRes, setRes, taskRes, pollRes, docRes, actRes, notifRes] =
         await Promise.all([
-          apiGetExpenses(tId),
-          apiGetBudget(tId),
-          apiGetItinerary(tId),
-          apiGetBookings(tId),
-          apiGetSettlements(tId),
-          apiGetTasks(tId),
-          apiGetPolls(tId),
-          apiGetDocuments(tId),
-          apiGetActivity(tId),
-          apiGetNotifications().catch(() => ({ notifications: [] })),
+          safeFetch(apiGetExpenses(tId), { expenses: [] }),
+          safeFetch(apiGetBudget(tId), null),
+          safeFetch(apiGetItinerary(tId), { items: [] }),
+          safeFetch(apiGetBookings(tId), { bookings: [] }),
+          safeFetch(apiGetSettlements(tId), null),
+          safeFetch(apiGetTasks(tId), { tasks: [] }),
+          safeFetch(apiGetPolls(tId), { polls: [] }),
+          safeFetch(apiGetDocuments(tId), { documents: [] }),
+          safeFetch(apiGetActivity(tId), { activities: [] }),
+          safeFetch(apiGetNotifications(), { notifications: [] }),
         ]);
 
-      const fetchedActivities = actRes.activities || [];
-
-      // Update in-memory cache safely by merging with existing cache if present
-      const cachedData = getTripCache(tId);
-      const mergedCacheActivities = mergeActivities(cachedData?.activities || [], fetchedActivities);
+      const fetchedActivities = (actRes.activities || []).filter(
+        (a: any) => !a.tripId || String(a.tripId?._id || a.tripId) === tId
+      );
 
       const workspacePayload = {
         trip: detailsRes.trip,
@@ -298,12 +350,18 @@ export const App: React.FC = () => {
         tasks: taskRes.tasks || [],
         polls: pollRes.polls || [],
         documents: docRes.documents || [],
-        activities: mergedCacheActivities,
+        activities: fetchedActivities,
       };
 
       setTripCache(tId, workspacePayload);
 
-      // Apply fresh data to React state without overwriting real-time chat messages!
+      // Race-Condition Guard: If user switched away to another trip, discard this stale response!
+      if (activeTripIdRef.current !== tId || currentSeq !== loadSeqRef.current) {
+        console.log(`[Workspace] Discarded stale workspace update for trip ${tId}. Active is ${activeTripIdRef.current}`);
+        return;
+      }
+
+      // Apply fresh data to React state
       setTripData(workspacePayload.trip);
       setMembers(workspacePayload.members);
       setExpenses(workspacePayload.expenses);
@@ -314,13 +372,26 @@ export const App: React.FC = () => {
       setTasks(workspacePayload.tasks);
       setPolls(workspacePayload.polls);
       setDocuments(workspacePayload.documents);
-      setActivities((prev) => mergeActivities(prev, workspacePayload.activities));
+      setWorkspaceLoading(false);
+      setWorkspaceError(null);
+
+      // Merge ONLY optimistic / pending messages for this trip with fresh server activities
+      setActivities((prev) => {
+        const pendingForThisTrip = prev.filter(
+          (a) => a.isPending && (!a.tripId || String(a.tripId?._id || a.tripId) === tId)
+        );
+        return mergeActivities(workspacePayload.activities, pendingForThisTrip, tId);
+      });
 
       if (notifRes.notifications) {
         setNotifications(notifRes.notifications);
       }
-    } catch (err) {
-      console.error('[Workspace] Error loading workspace data:', err);
+    } catch (err: any) {
+      if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+        console.error('[Workspace] Error loading workspace data:', err);
+        setWorkspaceError(err?.message || 'Failed to load trip group data. Tap to retry.');
+        setWorkspaceLoading(false);
+      }
     }
   };
 
@@ -336,7 +407,7 @@ export const App: React.FC = () => {
       // Realtime Activity / Message handler
       const handleActivityCreated = (newActivity: any) => {
         const targetTripId = String(newActivity.tripId?._id || newActivity.tripId || '').trim();
-        const activeIdNormalized = String(activeTripId || '').trim();
+        const activeIdNormalized = String(activeTripIdRef.current || activeTripId || '').trim();
 
         console.log(`[RTCHAT] EVENT_RECEIVED activityId=${newActivity._id} desc="${newActivity.description}"`);
         console.log(`[RTCHAT] EVENT_TRIP_ID target=${targetTripId} active=${activeIdNormalized}`);
@@ -357,12 +428,15 @@ export const App: React.FC = () => {
         );
 
         // Update in-memory cache for target trip
-        updateTripCacheItem(targetTripId, 'activities', (prev = []) => mergeActivities(prev, [newActivity]));
+        updateTripCacheItem(targetTripId, 'activities', (prev = []) => mergeActivities(prev, [newActivity], targetTripId));
 
-        // Update UI state if currently viewing active trip
+        // Update UI state strictly if currently viewing active trip
         if (targetTripId === activeIdNormalized) {
           setActivities((prev) => {
-            const nextState = mergeActivities(prev, [newActivity]);
+            const prevForTrip = prev.filter(
+              (a) => !a.tripId || String(a.tripId?._id || a.tripId) === targetTripId
+            );
+            const nextState = mergeActivities(prevForTrip, [newActivity], targetTripId);
             console.log(`[RTCHAT] STATE_UPDATED totalActivities=${nextState.length} id=${newActivity._id}`);
             return nextState;
           });
@@ -371,7 +445,9 @@ export const App: React.FC = () => {
 
       const handleWorkspaceSync = () => {
         // Non-blocking background sync for active workspace
-        loadWorkspaceData(activeTripId, true);
+        if (activeTripIdRef.current) {
+          loadWorkspaceData(activeTripIdRef.current, true);
+        }
       };
 
       const handleExpenseUpdated = (updatedExpense: any) => {
@@ -380,6 +456,13 @@ export const App: React.FC = () => {
           return;
         }
         const expIdStr = String(updatedExpense._id);
+        const expTripId = String(updatedExpense.tripId?._id || updatedExpense.tripId || '').trim();
+        const activeIdNormalized = String(activeTripIdRef.current || activeTripId || '').trim();
+
+        if (expTripId && activeIdNormalized && expTripId !== activeIdNormalized) {
+          // Event belongs to a different trip, do not modify current active trip state
+          return;
+        }
 
         // 1. Immediately update expenses state in place by matching expense ID
         setExpenses((prev) =>
@@ -387,9 +470,11 @@ export const App: React.FC = () => {
         );
 
         // 2. Immediately update in-memory trip cache
-        updateTripCacheItem(activeTripId, 'expenses', (prev = []) =>
-          prev.map((exp: any) => (String(exp._id) === expIdStr ? updatedExpense : exp))
-        );
+        if (activeIdNormalized) {
+          updateTripCacheItem(activeIdNormalized, 'expenses', (prev = []) =>
+            prev.map((exp: any) => (String(exp._id) === expIdStr ? updatedExpense : exp))
+          );
+        }
 
         // 3. Immediately update any activity referencing this expense in activities state
         setActivities((prev) =>
@@ -409,21 +494,23 @@ export const App: React.FC = () => {
         );
 
         // 4. Update activities in trip cache
-        updateTripCacheItem(activeTripId, 'activities', (prev = []) =>
-          prev.map((act: any) => {
-            const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
-            if (actExpId && String(actExpId) === expIdStr) {
-              return {
-                ...act,
-                metadata: {
-                  ...act.metadata,
-                  expense: updatedExpense,
-                },
-              };
-            }
-            return act;
-          })
-        );
+        if (activeIdNormalized) {
+          updateTripCacheItem(activeIdNormalized, 'activities', (prev = []) =>
+            prev.map((act: any) => {
+              const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+              if (actExpId && String(actExpId) === expIdStr) {
+                return {
+                  ...act,
+                  metadata: {
+                    ...act.metadata,
+                    expense: updatedExpense,
+                  },
+                };
+              }
+              return act;
+            })
+          );
+        }
 
         // 5. Non-blocking sync for settlements and dependent calculations
         handleWorkspaceSync();
@@ -556,7 +643,9 @@ export const App: React.FC = () => {
   const handleDeleteTripGroup = async () => {
     if (!activeTripId) return;
     try {
-      await apiDeleteTrip(activeTripId);
+      const deletedId = activeTripId;
+      await apiDeleteTrip(deletedId);
+      deleteTripCache(deletedId);
       setActiveTripId(null);
       loadTrips();
     } catch (err) {
@@ -654,12 +743,36 @@ export const App: React.FC = () => {
                 + Create New Trip
               </button>
             </div>
+          ) : workspaceLoading && !tripData ? (
+            /* WhatsApp Loading Skeleton */
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-xs font-semibold text-slate-400">Loading trip group...</p>
+            </div>
+          ) : workspaceError && !tripData ? (
+            /* Error State with Retry */
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+              <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-xl">
+                <AlertCircle className="w-7 h-7" />
+              </div>
+              <div className="max-w-sm space-y-1">
+                <h3 className="text-base font-bold text-slate-100">Unable to load trip group</h3>
+                <p className="text-xs text-rose-400 leading-relaxed">{workspaceError}</p>
+              </div>
+              <button
+                onClick={() => activeTripId && loadWorkspaceData(activeTripId)}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-lg transition-all"
+              >
+                Retry
+              </button>
+            </div>
           ) : (
             /* Active Trip Workspace - WhatsApp Group Chat Format */
             tripData && (
               <div className="flex-1 min-h-0 flex flex-col relative h-full overflow-hidden">
                 {/* Trip Group Header */}
                 <TripWorkspaceHeader
+                  key={`header-${activeTripId}`}
                   trip={tripData}
                   members={members}
                   isAdmin={isAdmin}
@@ -694,6 +807,8 @@ export const App: React.FC = () => {
                   {activeSection === 'feed' && (
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
                       <ActivityFeed
+                        key={`feed-${activeTripId}`}
+                        tripId={activeTripId}
                         activities={activities}
                         expenses={expenses}
                         itinerary={itinerary}
@@ -718,6 +833,7 @@ export const App: React.FC = () => {
                       />
                       {/* WhatsApp Chat Composer fixed at bottom of chat */}
                       <WhatsAppComposer
+                        key={`composer-${activeTripId}`}
                         onSendMessage={handleSendMessage}
                         onSelectAction={handleSelectQuickAction}
                       />

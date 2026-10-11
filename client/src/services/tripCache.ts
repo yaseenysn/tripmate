@@ -59,9 +59,19 @@ export const updateTripCacheItem = <K extends keyof Omit<TripWorkspaceData, 'cac
 };
 
 /**
+ * Remove cached workspace data for a deleted trip
+ */
+export const deleteTripCache = (tripId: string) => {
+  if (!tripId) return;
+  cacheMap.delete(tripId);
+  console.log(`[TripCache] Deleted cache entry for ${tripId}`);
+};
+
+/**
  * Clear the entire in-memory trip cache (on user logout)
  */
 export const clearTripCache = () => {
   cacheMap.clear();
   console.log(`[TripCache] Cleared all trip workspace cache entries on logout`);
 };
+

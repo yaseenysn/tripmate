@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Handshake, CheckCircle2, ArrowRight, DollarSign, X } from 'lucide-react';
-import { apiPaySettlement } from '../services/api';
+import { apiPaySettlement, apiRecordSettlement } from '../services/api';
 
 interface SettlementSheetProps {
   tripId: string;
@@ -16,13 +16,22 @@ export const SettlementSheet: React.FC<SettlementSheetProps> = ({
   const [selectedSettlement, setSelectedSettlement] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  const userBalances = settlementsData?.userBalances || [];
-  const settlements = settlementsData?.settlements || [];
+  const userBalances = settlementsData?.memberBalances || settlementsData?.userBalances || [];
+  const settlements = settlementsData?.suggestedSettlements || settlementsData?.settlements || [];
 
-  const handlePaySettlement = async (settlementId: string) => {
+  const handlePaySettlement = async (settlement: any) => {
+    if (!settlement) return;
     setLoading(true);
     try {
-      await apiPaySettlement(tripId, settlementId);
+      if (settlement._id) {
+        await apiPaySettlement(tripId, settlement._id);
+      } else {
+        await apiRecordSettlement(tripId, {
+          fromUser: settlement.fromUser?._id || settlement.fromUser,
+          toUser: settlement.toUser?._id || settlement.toUser,
+          amount: settlement.amount
+        });
+      }
       setSelectedSettlement(null);
       onRefresh();
     } catch (err) {
@@ -165,7 +174,7 @@ export const SettlementSheet: React.FC<SettlementSheetProps> = ({
               <button
                 type="button"
                 disabled={loading}
-                onClick={() => handlePaySettlement(selectedSettlement._id)}
+                onClick={() => handlePaySettlement(selectedSettlement)}
                 className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-xl shadow-lg transition-all"
               >
                 {loading ? 'Processing...' : 'Mark as Settled'}

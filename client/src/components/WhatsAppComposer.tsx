@@ -18,17 +18,38 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
   const [messageText, setMessageText] = useState('');
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Close popup menu when clicking outside
+  // Close popup menu when clicking outside or pressing Escape
   useEffect(() => {
+    if (!showAttachmentMenu) return;
+
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(target) &&
+        toggleButtonRef.current &&
+        !toggleButtonRef.current.contains(target)
+      ) {
         setShowAttachmentMenu(false);
       }
     };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowAttachmentMenu(false);
+      }
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showAttachmentMenu]);
 
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -143,8 +164,9 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
       <form onSubmit={handleSend} className="w-full flex items-center gap-2 max-w-4xl mx-auto">
         {/* [+] Action Sheet Toggle Button */}
         <button
+          ref={toggleButtonRef}
           type="button"
-          onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
+          onClick={() => setShowAttachmentMenu((prev) => !prev)}
           className={`p-2.5 rounded-full transition-all flex-shrink-0 ${
             showAttachmentMenu
               ? 'bg-rose-600 text-white rotate-45'

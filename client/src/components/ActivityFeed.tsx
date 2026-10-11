@@ -15,6 +15,7 @@ interface ActivityFeedProps {
   documents: any[];
   members: any[];
   currentUser: any;
+  tripId?: string;
   onSelectExpense: (exp: any) => void;
   onEditExpense?: (exp: any) => void;
   onDeleteExpense?: (id: string, e: React.MouseEvent) => void;
@@ -77,6 +78,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   documents = [],
   members = [],
   currentUser,
+  tripId,
   onSelectExpense,
   onEditExpense,
   onDeleteExpense,
@@ -149,6 +151,12 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   activities.forEach((act) => {
     if (act.type === 'EXPENSE_SPLIT_PAID') {
       return;
+    }
+    if (tripId) {
+      const actTripId = String(act.tripId?._id || act.tripId || '').trim();
+      if (actTripId && actTripId !== String(tripId).trim()) {
+        return;
+      }
     }
     const key = `act-${act._id}`;
     if (!processedKeys.has(key)) {
