@@ -185,6 +185,57 @@ export const App: React.FC = () => {
     }
   };
 
+  // Helper function to safely merge existing activities with incoming activities (from API or socket)
+  // Prevents overwriting real-time socket events or optimistic updates with stale REST API responses
+  const mergeActivities = (existing: any[], incoming: any[]) => {
+    const map = new Map<string, any>();
+
+    const getKey = (act: any) => {
+      if (act._id) return String(act._id);
+      if (act.clientMessageId) return String(act.clientMessageId);
+      if (act.metadata?.clientMessageId) return String(act.metadata.clientMessageId);
+      return null;
+    };
+
+    existing.forEach((act) => {
+      const key = getKey(act);
+      if (key) map.set(key, act);
+    });
+
+    incoming.forEach((act) => {
+      const key = getKey(act);
+      const clientMsgId = act.clientMessageId || act.metadata?.clientMessageId;
+
+      let existingKeyToReplace: string | null = null;
+      if (clientMsgId && map.has(clientMsgId)) {
+        existingKeyToReplace = clientMsgId;
+      } else {
+        for (const [k, v] of map.entries()) {
+          if (v.isPending && v.description === act.description) {
+            const vUser = String(v.userId?._id || v.userId?.id || v.userId || '');
+            const actUser = String(act.userId?._id || act.userId?.id || act.userId || '');
+            if (vUser && vUser === actUser) {
+              existingKeyToReplace = k;
+              break;
+            }
+          }
+        }
+      }
+
+      if (existingKeyToReplace) {
+        map.delete(existingKeyToReplace);
+      }
+
+      if (key) {
+        map.set(key, act);
+      }
+    });
+
+    const merged = Array.from(map.values());
+    merged.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+    return merged;
+  };
+
   // Load Active Trip Workspace Payload (with In-Memory Caching & Non-blocking Background Sync)
   const loadWorkspaceData = async (tId: string, isBackground = false) => {
     if (!tId) return;
@@ -204,7 +255,7 @@ export const App: React.FC = () => {
         setTasks(cached.tasks || []);
         setPolls(cached.polls || []);
         setDocuments(cached.documents || []);
-        setActivities(cached.activities || []);
+        setActivities((prev) => mergeActivities(prev, cached.activities || []));
 
         // Trigger background refresh to fetch fresh data without blocking the UI
         loadWorkspaceData(tId, true);
@@ -230,6 +281,12 @@ export const App: React.FC = () => {
           apiGetNotifications().catch(() => ({ notifications: [] })),
         ]);
 
+      const fetchedActivities = actRes.activities || [];
+
+      // Update in-memory cache safely by merging with existing cache if present
+      const cachedData = getTripCache(tId);
+      const mergedCacheActivities = mergeActivities(cachedData?.activities || [], fetchedActivities);
+
       const workspacePayload = {
         trip: detailsRes.trip,
         members: detailsRes.members || [],
@@ -241,13 +298,12 @@ export const App: React.FC = () => {
         tasks: taskRes.tasks || [],
         polls: pollRes.polls || [],
         documents: docRes.documents || [],
-        activities: actRes.activities || [],
+        activities: mergedCacheActivities,
       };
 
-      // Update in-memory cache
       setTripCache(tId, workspacePayload);
 
-      // Apply fresh data to React state
+      // Apply fresh data to React state without overwriting real-time chat messages!
       setTripData(workspacePayload.trip);
       setMembers(workspacePayload.members);
       setExpenses(workspacePayload.expenses);
@@ -258,7 +314,7 @@ export const App: React.FC = () => {
       setTasks(workspacePayload.tasks);
       setPolls(workspacePayload.polls);
       setDocuments(workspacePayload.documents);
-      setActivities(workspacePayload.activities);
+      setActivities((prev) => mergeActivities(prev, workspacePayload.activities));
 
       if (notifRes.notifications) {
         setNotifications(notifRes.notifications);
@@ -278,85 +334,36 @@ export const App: React.FC = () => {
 
       // Realtime Activity / Message handler
       const handleActivityCreated = (newActivity: any) => {
-        const receivedTime = Date.now();
-        console.log(`[Chat] [Socket Event] Received activity.created for trip at ${receivedTime}:`, newActivity);
+        const targetTripId = String(newActivity.tripId?._id || newActivity.tripId || '').trim();
+        const activeIdNormalized = String(activeTripId || '').trim();
 
-        const targetTripId = String(newActivity.tripId?._id || newActivity.tripId || '');
+        console.log(`[RTCHAT] activity_created_received activityId=${newActivity._id} desc="${newActivity.description}"`);
+        console.log(`[RTCHAT] activity_trip_id target=${targetTripId} active=${activeIdNormalized}`);
 
-        // Increment unread count for non-active trips
-        if (targetTripId !== String(activeTripId)) {
-          setTrips((prev) =>
-            prev.map((t) => {
-              if (t._id === targetTripId) {
-                return {
-                  ...t,
-                  unreadCount: (t.unreadCount || 0) + 1,
-                  lastActivity: newActivity,
-                  updatedAt: newActivity.createdAt || new Date().toISOString(),
-                };
-              }
-              return t;
-            })
-          );
-        }
+        // Update trip list for ALL trips (active or non-active)
+        setTrips((prev) =>
+          prev.map((t) => {
+            if (t._id === targetTripId) {
+              return {
+                ...t,
+                unreadCount: targetTripId !== activeIdNormalized ? (t.unreadCount || 0) + 1 : 0,
+                lastActivity: newActivity,
+                updatedAt: newActivity.createdAt || new Date().toISOString(),
+              };
+            }
+            return t;
+          })
+        );
 
         // Update in-memory cache for target trip
-        updateTripCacheItem(targetTripId, 'activities', (prev = []) => {
-          const clientMsgId = newActivity.metadata?.clientMessageId;
-          const exists = prev.some((a) => {
-            if (String(a._id) === String(newActivity._id)) return true;
-            if (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) return true;
-            if (a.isPending && a.description === newActivity.description) {
-              const prevUser = String(a.userId?._id || a.userId?.id || a.userId || '');
-              const newUser = String(newActivity.userId?._id || newActivity.userId?.id || newActivity.userId || '');
-              if (prevUser && prevUser === newUser) return true;
-            }
-            return false;
-          });
-
-          if (exists) {
-            return prev.map((a) => {
-              if (
-                String(a._id) === String(newActivity._id) ||
-                (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) ||
-                (a.isPending && a.description === newActivity.description)
-              ) {
-                return newActivity;
-              }
-              return a;
-            });
-          }
-          return [...prev, newActivity];
-        });
+        updateTripCacheItem(targetTripId, 'activities', (prev = []) => mergeActivities(prev, [newActivity]));
 
         // Update UI state if currently viewing active trip
-        if (targetTripId === String(activeTripId)) {
+        if (targetTripId === activeIdNormalized) {
           setActivities((prev) => {
-            const clientMsgId = newActivity.metadata?.clientMessageId;
-            const exists = prev.some((a) => {
-              if (String(a._id) === String(newActivity._id)) return true;
-              if (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) return true;
-              if (a.isPending && a.description === newActivity.description) {
-                const prevUser = String(a.userId?._id || a.userId?.id || a.userId || '');
-                const newUser = String(newActivity.userId?._id || newActivity.userId?.id || newActivity.userId || '');
-                if (prevUser && prevUser === newUser) return true;
-              }
-              return false;
-            });
-
-            if (exists) {
-              return prev.map((a) => {
-                if (
-                  String(a._id) === String(newActivity._id) ||
-                  (clientMsgId && (a.clientMessageId === clientMsgId || a.metadata?.clientMessageId === clientMsgId)) ||
-                  (a.isPending && a.description === newActivity.description)
-                ) {
-                  return newActivity;
-                }
-                return a;
-              });
-            }
-            return [...prev, newActivity];
+            const nextState = mergeActivities(prev, [newActivity]);
+            console.log(`[RTCHAT] react_state_updated totalActivities=${nextState.length} addedOrUpdatedId=${newActivity._id}`);
+            return nextState;
           });
         }
       };
@@ -416,6 +423,8 @@ export const App: React.FC = () => {
     const startTime = Date.now();
     const clientMessageId = `temp_${startTime}_${Math.random().toString(36).substring(2, 9)}`;
 
+    console.log(`[RTCHAT] send_started tripId=${activeTripId} text="${text.trim()}" clientMessageId=${clientMessageId}`);
+
     // 1. OPTIMISTIC UI UPDATE - Sender sees message IMMEDIATELY (0ms delay!)
     const optimisticActivity = {
       _id: clientMessageId,
@@ -429,14 +438,15 @@ export const App: React.FC = () => {
       isPending: true,
     };
 
-    console.log(`[Chat] [0ms] Send initiated. Adding optimistic message locally:`, clientMessageId);
+    console.log(`[RTCHAT] optimistic_message_added clientMessageId=${clientMessageId}`);
     setActivities((prev) => [...prev, optimisticActivity]);
 
     // 2. Persistent API call in background
     try {
       const res = await apiSendChatMessage(activeTripId, text.trim(), clientMessageId);
       const elapsed = Date.now() - startTime;
-      console.log(`[Chat] [${elapsed}ms] API response received for:`, clientMessageId, res.activity?._id);
+      console.log(`[RTCHAT] api_response_received clientMessageId=${clientMessageId} elapsed=${elapsed}ms`);
+      console.log(`[RTCHAT] api_activity_id activityId=${res.activity?._id}`);
 
       if (res.activity) {
         setActivities((prev) =>

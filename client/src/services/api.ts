@@ -12,12 +12,8 @@ const getApiBaseUrl = () => {
 };
 
 const getFallbackBaseUrl = () => {
-  const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
-    const cleanUrl = envUrl.trim().replace(/\/$/, '');
-    return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
-  }
-  return 'http://localhost:5000/api';
+  // Fall back to relative /api which Vite dev server proxies to http://localhost:5000
+  return '/api';
 };
 
 const API_BASE = getApiBaseUrl();
@@ -57,12 +53,17 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
         headers
       });
     }
-  } catch (err) {
-    console.warn(`[API] Primary request to ${primaryUrl} failed:`, err);
-    res = await fetch(`${FALLBACK_BASE}${cleanEndpoint}`, {
-      ...options,
-      headers
-    });
+  } catch (err: any) {
+    console.warn(`[API] Primary request to ${primaryUrl} failed (${err?.message}). Attempting fallback to ${FALLBACK_BASE}${cleanEndpoint}`);
+    try {
+      res = await fetch(`${FALLBACK_BASE}${cleanEndpoint}`, {
+        ...options,
+        headers
+      });
+    } catch (fallbackErr: any) {
+      console.error(`[API Error] Failed to connect to server at ${primaryUrl} and ${FALLBACK_BASE}:`, fallbackErr);
+      throw new Error(`Unable to connect to the server (Failed to fetch). Please make sure the backend server is running on http://localhost:5000.`);
+    }
   }
 
   // Inspect Content-Type to prevent JSON parse crashes on HTML pages

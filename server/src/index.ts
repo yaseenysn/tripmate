@@ -33,21 +33,41 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Dynamic CORS configuration supporting FRONTEND_URL env var
+// Dynamic CORS configuration supporting FRONTEND_URL env var and local development
 const getCorsOrigins = () => {
   const frontendUrl = process.env.FRONTEND_URL;
-  if (!frontendUrl || frontendUrl.trim() === '*' || frontendUrl.trim() === '') {
-    return '*';
-  }
-  const origins = frontendUrl.split(',').map(url => url.trim().replace(/\/$/, ''));
-  // Always include local dev origins alongside production FRONTEND_URL if not wildcard
-  return Array.from(new Set([...origins, 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:3000', 'http://localhost:5000']));
+  const origins = frontendUrl ? frontendUrl.split(',').map(url => url.trim().replace(/\/$/, '')) : [];
+  return Array.from(new Set([
+    ...origins,
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:5173',
+    'http://localhost:5000',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:5000'
+  ]));
 };
 
 const allowedOrigins = getCorsOrigins();
 
+const corsOriginHandler = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+  // Allow requests with no origin (like mobile apps, curl, Postman)
+  if (!origin) return callback(null, true);
+  if (
+    origin.startsWith('http://localhost:') ||
+    origin.startsWith('http://127.0.0.1:') ||
+    allowedOrigins.includes(origin) ||
+    allowedOrigins.includes('*')
+  ) {
+    return callback(null, true);
+  }
+  callback(null, false);
+};
+
 app.use(cors({
-  origin: allowedOrigins,
+  origin: corsOriginHandler,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 }));
@@ -56,7 +76,7 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: corsOriginHandler,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true
   }

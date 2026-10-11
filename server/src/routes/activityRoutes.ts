@@ -32,6 +32,8 @@ router.post('/:id/activity', authenticateToken, requireTripMembership, async (re
       return res.status(400).json({ error: 'Message content is required' });
     }
 
+    console.log(`[RTCHAT] message_request_received tripId=${tripId} userId=${userId} clientMessageId=${clientMessageId}`);
+
     const startTime = Date.now();
     const { logActivity } = require('../services/activityService');
     const activity = await logActivity(

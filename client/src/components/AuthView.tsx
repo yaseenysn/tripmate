@@ -22,6 +22,13 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const formatAuthError = (err: any, defaultMsg: string) => {
+    if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError') || err?.message?.includes('fetch failed')) {
+      return 'Unable to connect to backend server. Please verify the server is running on http://localhost:5000.';
+    }
+    return err?.message || defaultMsg;
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -40,7 +47,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
         setError('Invalid response from server.');
       }
     } catch (err: any) {
-      setError(err.message || 'Invalid email or password.');
+      setError(formatAuthError(err, 'Invalid email or password.'));
     } finally {
       setLoading(false);
     }
@@ -74,7 +81,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
         setError('Failed to create account.');
       }
     } catch (err: any) {
-      setError(err.message || 'Registration failed.');
+      setError(formatAuthError(err, 'Registration failed.'));
     } finally {
       setLoading(false);
     }
@@ -93,7 +100,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
         onAuthSuccess(res.user, res.token);
       }
     } catch (err: any) {
-      setError(err.message || 'Demo login failed');
+      setError(formatAuthError(err, 'Demo login failed'));
     } finally {
       setLoading(false);
     }

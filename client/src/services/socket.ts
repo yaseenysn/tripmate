@@ -22,11 +22,17 @@ export const getSocket = (): Socket => {
 
     // Register ONE global 'connect' handler on socket creation for connect & reconnect
     socket.on('connect', () => {
-      console.log(`[Socket.IO Client] Connected with ID: ${socket?.id}`);
+      console.log(`[RTCHAT] socket_connected socketId=${socket?.id}`);
       if (currentJoinedRoom) {
-        socket?.emit('join_trip', currentJoinedRoom);
-        console.log(`[Socket.IO Client] Auto re-joined room: trip_${currentJoinedRoom}`);
+        console.log(`[RTCHAT] trip_room_join_requested room=trip_${currentJoinedRoom} (reconnect)`);
+        socket?.emit('join_trip', currentJoinedRoom, (ack: any) => {
+          console.log(`[RTCHAT] trip_room_join_confirmed room=trip_${ack?.tripId} count=${ack?.roomSocketCount}`);
+        });
       }
+    });
+
+    socket.on('trip_room_joined', (ack: any) => {
+      console.log(`[RTCHAT] trip_room_join_confirmed room=trip_${ack?.tripId} count=${ack?.roomSocketCount}`);
     });
 
     socket.on('disconnect', (reason) => {
@@ -52,9 +58,12 @@ export const joinTripRoom = (tripId: string) => {
   currentJoinedRoom = cleanTripId;
   const s = getSocket();
 
+  console.log(`[RTCHAT] trip_room_join_requested room=trip_${cleanTripId}`);
+
   if (s.connected) {
-    s.emit('join_trip', cleanTripId);
-    console.log(`[Socket.IO Client] Emitted join_trip for room: trip_${cleanTripId}`);
+    s.emit('join_trip', cleanTripId, (ack: any) => {
+      console.log(`[RTCHAT] trip_room_join_confirmed room=trip_${ack?.tripId} count=${ack?.roomSocketCount}`);
+    });
   } else {
     console.log(`[Socket.IO Client] Queued room join for connect event: trip_${cleanTripId}`);
   }
