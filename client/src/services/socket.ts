@@ -4,24 +4,43 @@ let socket: Socket | null = null;
 let currentJoinedRoom: string | null = null;
 
 const resolveSocketUrl = (): string => {
+  // 1. Use a valid, non-empty VITE_SOCKET_URL (normalized without trailing slashes or /api)
   const envSocket = import.meta.env.VITE_SOCKET_URL;
   if (envSocket && typeof envSocket === 'string' && envSocket.trim()) {
-    return envSocket.trim().replace(/\/$/, '').replace(/\/api$/, '');
+    const cleanSocket = envSocket.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '');
+    if (cleanSocket) return cleanSocket;
   }
+
+  // 2. Otherwise, derive the Socket.IO base URL from VITE_API_URL by removing a trailing /api
   const envApi = import.meta.env.VITE_API_URL;
   if (envApi && typeof envApi === 'string' && envApi.trim()) {
-    return envApi.trim().replace(/\/$/, '').replace(/\/api$/, '');
+    const cleanApi = envApi.trim().replace(/\/+$/, '').replace(/\/api\/?$/, '');
+    if (cleanApi) return cleanApi;
   }
-  if (typeof window !== 'undefined') {
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return `${window.location.protocol}//${window.location.hostname}:5000`;
-    }
-    // Local area network IP (e.g. mobile testing on 192.168.x.x)
-    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(window.location.hostname)) {
-      return `${window.location.protocol}//${window.location.hostname}:5000`;
-    }
+
+  const isBrowser = typeof window !== 'undefined';
+  const hostname = isBrowser ? window.location.hostname : '';
+  const isLocalDev =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+
+  // 3. Use localhost:5000 ONLY when the frontend is actually running on localhost or 127.0.0.1 in development
+  if (isLocalDev) {
+    const protocol = isBrowser ? window.location.protocol : 'http:';
+    return `${protocol}//${hostname}:5000`;
   }
-  return 'http://localhost:5000';
+
+  // 4. NEVER fall back to localhost:5000 on a deployed Vercel hostname
+  if (isBrowser && window.location.hostname.includes('vercel.app')) {
+    return 'https://tripmate-glxh.onrender.com';
+  }
+
+  // 5. If production configuration is missing, fail clearly with a useful diagnostic error
+  const errorMsg =
+    '[Socket.IO] Missing VITE_SOCKET_URL and VITE_API_URL in production environment. Realtime chat cannot initialize without backend URL.';
+  console.error(errorMsg);
+  throw new Error(errorMsg);
 };
 
 export const getSocket = (): Socket => {

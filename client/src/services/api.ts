@@ -8,6 +8,10 @@ const getApiBaseUrl = () => {
   if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
     return 'http://localhost:5000/api';
   }
+  // Production Vercel fallback
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+    return 'https://tripmate-glxh.onrender.com/api';
+  }
   return '/api';
 };
 

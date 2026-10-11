@@ -39,6 +39,7 @@ const getCorsOrigins = () => {
   const origins = frontendUrl ? frontendUrl.split(',').map(url => url.trim().replace(/\/$/, '')) : [];
   return Array.from(new Set([
     ...origins,
+    'https://tripmate-ten-mu.vercel.app',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:5173',
@@ -58,6 +59,8 @@ const corsOriginHandler = (origin: string | undefined, callback: (err: Error | n
   if (
     origin.startsWith('http://localhost:') ||
     origin.startsWith('http://127.0.0.1:') ||
+    origin === 'https://tripmate-ten-mu.vercel.app' ||
+    origin.endsWith('.vercel.app') ||
     allowedOrigins.includes(origin) ||
     allowedOrigins.includes('*')
   ) {
