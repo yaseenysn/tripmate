@@ -111,7 +111,14 @@ export const ExpenseDetailSheet: React.FC<ExpenseDetailSheetProps> = ({
 
             <button
               type="button"
-              onClick={() => setShowConfirmModal(true)}
+              onClick={() => {
+                if (onPaySplit) {
+                  onPaySplit(expense, userShare, payerName);
+                  onClose();
+                } else {
+                  setShowConfirmModal(true);
+                }
+              }}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold shadow-lg flex items-center justify-center gap-1.5 transition-all"
             >
               <CreditCard className="w-4 h-4" />
@@ -267,7 +274,7 @@ export const ExpenseDetailSheet: React.FC<ExpenseDetailSheetProps> = ({
           payerName={payerName}
           onSuccess={() => {
             setShowConfirmModal(false);
-            onPaySplit(expense, userShare, payerName);
+            onClose();
           }}
         />
       )}

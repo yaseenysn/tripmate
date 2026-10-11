@@ -374,9 +374,64 @@ export const App: React.FC = () => {
         loadWorkspaceData(activeTripId, true);
       };
 
+      const handleExpenseUpdated = (updatedExpense: any) => {
+        if (!updatedExpense || !updatedExpense._id) {
+          handleWorkspaceSync();
+          return;
+        }
+        const expIdStr = String(updatedExpense._id);
+
+        // 1. Immediately update expenses state in place by matching expense ID
+        setExpenses((prev) =>
+          prev.map((exp) => (String(exp._id) === expIdStr ? updatedExpense : exp))
+        );
+
+        // 2. Immediately update in-memory trip cache
+        updateTripCacheItem(activeTripId, 'expenses', (prev = []) =>
+          prev.map((exp: any) => (String(exp._id) === expIdStr ? updatedExpense : exp))
+        );
+
+        // 3. Immediately update any activity referencing this expense in activities state
+        setActivities((prev) =>
+          prev.map((act) => {
+            const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+            if (actExpId && String(actExpId) === expIdStr) {
+              return {
+                ...act,
+                metadata: {
+                  ...act.metadata,
+                  expense: updatedExpense,
+                },
+              };
+            }
+            return act;
+          })
+        );
+
+        // 4. Update activities in trip cache
+        updateTripCacheItem(activeTripId, 'activities', (prev = []) =>
+          prev.map((act: any) => {
+            const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+            if (actExpId && String(actExpId) === expIdStr) {
+              return {
+                ...act,
+                metadata: {
+                  ...act.metadata,
+                  expense: updatedExpense,
+                },
+              };
+            }
+            return act;
+          })
+        );
+
+        // 5. Non-blocking sync for settlements and dependent calculations
+        handleWorkspaceSync();
+      };
+
       socket.on('activity.created', handleActivityCreated);
       socket.on('expense.created', handleWorkspaceSync);
-      socket.on('expense.updated', handleWorkspaceSync);
+      socket.on('expense.updated', handleExpenseUpdated);
       socket.on('expense.deleted', handleWorkspaceSync);
       socket.on('member.joined', handleWorkspaceSync);
       socket.on('member.removed', handleWorkspaceSync);
@@ -391,7 +446,7 @@ export const App: React.FC = () => {
         leaveTripRoom(activeTripId);
         socket.off('activity.created', handleActivityCreated);
         socket.off('expense.created', handleWorkspaceSync);
-        socket.off('expense.updated', handleWorkspaceSync);
+        socket.off('expense.updated', handleExpenseUpdated);
         socket.off('expense.deleted', handleWorkspaceSync);
         socket.off('member.joined', handleWorkspaceSync);
         socket.off('member.removed', handleWorkspaceSync);
@@ -854,7 +909,30 @@ export const App: React.FC = () => {
               expense={paySplitInfo.expense}
               userShare={paySplitInfo.userShare}
               payerName={paySplitInfo.payerName}
-              onSuccess={() => loadWorkspaceData(activeTripId)}
+              onSuccess={(updatedExpense?: any) => {
+                if (updatedExpense) {
+                  // In-place update of existing card immediately
+                  setExpenses((prev) =>
+                    prev.map((e) => (String(e._id) === String(updatedExpense._id) ? updatedExpense : e))
+                  );
+                  setActivities((prev) =>
+                    prev.map((act) => {
+                      const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+                      if (actExpId && String(actExpId) === String(updatedExpense._id)) {
+                        return {
+                          ...act,
+                          metadata: {
+                            ...act.metadata,
+                            expense: updatedExpense,
+                          },
+                        };
+                      }
+                      return act;
+                    })
+                  );
+                }
+                loadWorkspaceData(activeTripId, true);
+              }}
             />
           )}
         </>

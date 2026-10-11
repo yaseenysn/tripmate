@@ -9,7 +9,7 @@ interface PaySplitConfirmationModalProps {
   expense: any;
   userShare: number;
   payerName: string;
-  onSuccess: () => void;
+  onSuccess: (updatedExpense?: any) => void;
 }
 
 export const PaySplitConfirmationModal: React.FC<PaySplitConfirmationModalProps> = ({
@@ -31,8 +31,8 @@ export const PaySplitConfirmationModal: React.FC<PaySplitConfirmationModalProps>
     setError('');
 
     try {
-      await apiPayExpenseSplit(tripId, expense._id);
-      onSuccess();
+      const res = await apiPayExpenseSplit(tripId, expense._id);
+      onSuccess(res?.expense);
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to mark payment as paid');

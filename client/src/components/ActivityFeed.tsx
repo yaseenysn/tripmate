@@ -145,8 +145,11 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   const combinedStream: any[] = [];
   const processedKeys = new Set<string>();
 
-  // Add all activity records
+  // Add all activity records (excluding split payment activities to update existing card in place)
   activities.forEach((act) => {
+    if (act.type === 'EXPENSE_SPLIT_PAID') {
+      return;
+    }
     const key = `act-${act._id}`;
     if (!processedKeys.has(key)) {
       processedKeys.add(key);
@@ -174,6 +177,8 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
       groupedItems[groupedItems.length - 1].items.push(item);
     }
   });
+
+  const renderedExpenseIds = new Set<string>();
 
   return (
     <div
@@ -238,7 +243,15 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
               const targetExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
               const relatedExpense = targetExpId
                 ? (expenses.find((e) => String(e._id) === String(targetExpId)) || act.metadata?.expense)
-                : (actType === 'EXPENSE_ADDED' || actType === 'EXPENSE_UPDATED' || actType === 'EXPENSE_SPLIT_PAID' ? act.metadata?.expense : null);
+                : (actType === 'EXPENSE_ADDED' || actType === 'EXPENSE_UPDATED' ? act.metadata?.expense : null);
+
+              const stableExpId = String(targetExpId || relatedExpense?._id || '');
+              const isExpenseCardCandidate = actType === 'EXPENSE_ADDED' || (Boolean(relatedExpense) && actType !== 'EXPENSE_UPDATED');
+              const shouldRenderExpenseCard = isExpenseCardCandidate && stableExpId && !renderedExpenseIds.has(stableExpId);
+
+              if (shouldRenderExpenseCard) {
+                renderedExpenseIds.add(stableExpId);
+              }
 
               // Check for related itinerary item
               const relatedItineraryId = act.metadata?.itineraryId;
@@ -284,7 +297,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                   <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[65%]`}>
 
                     {/* EXPENSE / PAYMENT MESSAGE CARD (Google Pay Inspired) */}
-                    {actType === 'EXPENSE_ADDED' || actType === 'EXPENSE_SPLIT_PAID' || relatedExpense ? (
+                    {shouldRenderExpenseCard ? (
                       <div className="space-y-1">
                         {!isSelf && (
                           <span className={`text-xs font-bold ${nameColor} px-1 block`}>

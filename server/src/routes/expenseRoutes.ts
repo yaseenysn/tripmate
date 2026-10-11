@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import mongoose from 'mongoose';
-import { Expense, TripMember, Budget, Trip } from '../models';
+import { Expense, TripMember, Budget, Trip, Activity } from '../models';
 import { authenticateToken } from '../middleware/auth';
 import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
@@ -264,6 +264,14 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
       return res.status(404).json({ error: 'Participant not found in expense split' });
     }
 
+    // Prevent duplicate payment for already paid split
+    if (participant.status === 'PAID') {
+      const populated = await Expense.findById(expense._id)
+        .populate('paidBy', 'name avatar email')
+        .populate('participants.userId', 'name avatar email');
+      return res.json({ expense: populated });
+    }
+
     participant.status = 'PAID';
     await expense.save();
 
@@ -271,16 +279,24 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
       .populate('paidBy', 'name avatar email')
       .populate('participants.userId', 'name avatar email');
 
-    const payerName = (populated?.paidBy as any)?.name || 'Member';
-
-    await logActivity(
-      tripId,
-      currentUserId,
-      'EXPENSE_SPLIT_PAID',
-      `marked ₹${participant.share.toLocaleString()} share as paid to ${payerName} for "${expense.title}"`,
-      { expenseId: expense._id, expense: populated, amount: expense.amount }
+    // Update existing activity record for this expense in place so metadata.expense is fresh
+    await Activity.updateMany(
+      {
+        tripId,
+        $or: [
+          { 'metadata.expenseId': expense._id },
+          { 'metadata.expense._id': expense._id }
+        ]
+      },
+      {
+        $set: {
+          'metadata.expense': populated
+        }
+      }
     );
 
+    // Emit real-time updates to all connected trip members
+    // This updates the existing expense card in place without creating a duplicate card
     emitToTrip(tripId, 'expense.updated', populated);
     emitToTrip(tripId, 'settlement.updated', { tripId });
 
