@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { apiGetTripReport, apiCloseTrip } from '../services/api';
 import { generateTripReportPDF } from '../services/pdfReportGenerator';
+import { getTripReportCache, setTripReportCache, invalidateTripReportCache } from '../services/tripCache';
 import { CalculationExplanationModal } from './CalculationExplanationModal';
 import { RecordSettlementModal } from './RecordSettlementModal';
 
@@ -28,6 +29,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
 }) => {
   const [reportData, setReportData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [closingTrip, setClosingTrip] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -47,17 +49,40 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
   const [recordingSettlement, setRecordingSettlement] = useState<any>(null);
   const [expandedMembers, setExpandedMembers] = useState<Record<string, boolean>>({});
 
-  const fetchReport = async () => {
+  const fetchReport = async (forceRefresh = false) => {
     if (!tripId) return;
-    setLoading(true);
+
+    if (!forceRefresh) {
+      // 1. Check in-memory report cache for 0ms instant display!
+      const cached = getTripReportCache(tripId);
+      if (cached) {
+        setReportData(cached.report);
+        setLoading(false);
+        if (cached.isFresh) {
+          console.log(`[TripReport] Fresh cache HIT for ${tripId}, instant render without fetch`);
+          return;
+        }
+        console.log(`[TripReport] Stale cache HIT for ${tripId}, background refreshing`);
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+    } else {
+      setIsRefreshing(true);
+    }
+
     setError(null);
     try {
       const res = await apiGetTripReport(tripId);
       setReportData(res.report);
+      setTripReportCache(tripId, res.report);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch trip report');
+      if (!reportData) {
+        setError(err.message || 'Failed to fetch trip report');
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -87,8 +112,9 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
     setCloseError(null);
     try {
       const res = await apiCloseTrip(tripId);
+      invalidateTripReportCache(tripId);
       if (onTripClosed) onTripClosed(res.trip);
-      fetchReport();
+      fetchReport(true);
     } catch (err: any) {
       setCloseError(err.message || 'Failed to close trip');
     } finally {
@@ -118,46 +144,53 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-[#111b21] border border-slate-800 rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="bg-[#111b21] border border-slate-800 rounded-2xl sm:rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[92vh]">
         {/* Top Header Bar */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-[#1f2c34]/70 sticky top-0 z-10">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <FileText className="w-5 h-5" />
+        <div className="p-3 sm:p-5 border-b border-slate-800 flex items-center justify-between gap-2 bg-[#1f2c34]/90 sticky top-0 z-10">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 flex-shrink-0">
+              <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-extrabold text-white tracking-tight">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h3 className="text-sm sm:text-base font-extrabold text-white tracking-tight truncate">
                   Trip Summary & Settlement Report
                 </h3>
                 {isClosed && (
-                  <span className="text-[10px] font-extrabold bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="text-[9px] sm:text-[10px] font-extrabold bg-slate-800 text-slate-300 border border-slate-700 px-1.5 py-0.5 rounded-full flex items-center gap-1 flex-shrink-0">
                     <Lock className="w-2.5 h-2.5" />
                     <span>CLOSED</span>
                   </span>
                 )}
+                {isRefreshing && (
+                  <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 animate-pulse flex-shrink-0">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                    <span className="hidden sm:inline">Syncing</span>
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                 {trip?.name || 'Loading trip report...'} • {trip?.destination}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             <button
               onClick={handleDownloadPdf}
               disabled={loading || !reportData || downloadingPdf}
-              className="p-2 sm:px-3 sm:py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
+              className="hidden sm:flex px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-all items-center gap-1.5 shadow-sm active:scale-95"
               title="Download PDF Report"
             >
               <Download className="w-4 h-4 text-emerald-400" />
-              <span className="hidden sm:inline">Download PDF</span>
+              <span>Download PDF</span>
             </button>
 
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/80 transition-colors"
+              className="p-1.5 sm:p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/80 transition-colors"
+              title="Close Report"
             >
               <X className="w-5 h-5" />
             </button>
@@ -165,7 +198,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
         </div>
 
         {/* Modal Scrollable Content */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1 text-slate-200">
+        <div className="p-3 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6 flex-1 text-slate-200">
           {loading ? (
             <div className="py-20 text-center space-y-3">
               <div className="w-8 h-8 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin mx-auto" />
@@ -176,7 +209,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
             <div className="p-6 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-center space-y-3">
               <p className="text-sm text-rose-400 font-semibold">{error}</p>
               <button
-                onClick={fetchReport}
+                onClick={() => fetchReport(true)}
                 className="px-4 py-2 bg-slate-800 text-xs font-bold text-white rounded-xl hover:bg-slate-700"
               >
                 Retry
@@ -185,25 +218,29 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
           ) : (
             <>
               {/* SECTION A: TRIP OVERVIEW */}
-              <div className="bg-[#1f2c34] p-5 rounded-3xl border border-slate-700/60 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="bg-[#1f2c34] p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-700/60 space-y-3 sm:space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
                   <div>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block mb-1">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block mb-0.5 sm:mb-1">
                       Section A • Trip Overview
                     </span>
-                    <h2 className="text-xl font-extrabold text-white">{trip.name}</h2>
-                    <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{trip.destination}</span>
+                    <h2 className="text-lg sm:text-xl font-extrabold text-white">{trip.name}</h2>
+                    <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{trip.destination}</span>
+                      </span>
                       <span>•</span>
-                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{startDateStr} – {endDateStr}</span>
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{startDateStr} – {endDateStr}</span>
+                      </span>
                     </p>
                   </div>
 
                   {/* Settlement Status Badge */}
-                  <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                  <div className="text-left sm:text-right">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5 sm:mb-1">
                       Settlement Status
                     </span>
                     <div
@@ -229,21 +266,21 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                 </div>
 
                 {/* Key Metrics Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-700/60">
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 pt-3 border-t border-slate-700/60">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Expenses</span>
-                    <span className="text-base font-extrabold text-white">
+                    <span className="text-sm sm:text-base font-extrabold text-white">
                       {formatCurr(overview.totalExpenses)}
                     </span>
                   </div>
 
                   {/* Financial Metric: Average Expense Per Member / Expense Per Person */}
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800 flex flex-col justify-between">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800 flex flex-col justify-between">
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-400 block truncate" title={overview.perMemberExpenseLabel}>
                         {overview.perMemberExpenseLabel || (overview.isPurelyEqualSplitAllMembers ? 'Expense Per Person' : 'Average Expense Per Member')}
                       </span>
-                      <span className="text-base font-extrabold text-emerald-400">
+                      <span className="text-sm sm:text-base font-extrabold text-emerald-400">
                         {formatCurr(overview.averageExpensePerMember || 0)}
                       </span>
                       <p className="text-[9.5px] text-slate-500 font-mono mt-0.5 truncate" title={overview.perMemberExpenseCalculationText}>
@@ -266,23 +303,23 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                     </button>
                   </div>
 
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Confirmed Settled</span>
-                    <span className="text-base font-extrabold text-emerald-400">
+                    <span className="text-sm sm:text-base font-extrabold text-emerald-400">
                       {formatCurr(overview.totalSettledAmount)}
                     </span>
                   </div>
 
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Remaining Debt</span>
-                    <span className={`text-base font-extrabold ${overview.outstandingAmount > 0 ? 'text-rose-400' : 'text-slate-200'}`}>
+                    <span className={`text-sm sm:text-base font-extrabold ${overview.outstandingAmount > 0 ? 'text-rose-400' : 'text-slate-200'}`}>
                       {formatCurr(overview.outstandingAmount)}
                     </span>
                   </div>
 
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800 col-span-2 sm:col-span-1">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Trip Members</span>
-                    <span className="text-base font-extrabold text-slate-200">
+                    <span className="text-sm sm:text-base font-extrabold text-slate-200">
                       {overview.memberCount} members
                     </span>
                   </div>
@@ -290,20 +327,20 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
               </div>
 
               {/* SECTION B: EXPENSE BREAKDOWN */}
-              <div className="bg-[#1f2c34] p-5 rounded-3xl border border-slate-700/60 space-y-4">
+              <div className="bg-[#1f2c34] p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-700/60 space-y-3 sm:space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
                       Section B • Expense Breakdown
                     </span>
-                    <h3 className="text-sm font-bold text-white">Category Spending Totals</h3>
+                    <h3 className="text-xs sm:text-sm font-bold text-white">Category Spending Totals</h3>
                   </div>
                   <span className="text-xs font-extrabold text-slate-300">
                     {formatCurr(overview.totalExpenses)} Total
                   </span>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2.5 sm:space-y-3">
                   {reportData.categoryBreakdown.length === 0 ? (
                     <p className="text-xs text-slate-400 italic">No expenses recorded for this trip.</p>
                   ) : (
@@ -330,20 +367,20 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
               </div>
 
               {/* SECTION C: MEMBER-WISE FINANCIAL SUMMARY */}
-              <div className="bg-[#1f2c34] p-5 rounded-3xl border border-slate-700/60 space-y-4">
+              <div className="bg-[#1f2c34] p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-700/60 space-y-3 sm:space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
                       Section C • Member-wise Financial Summary
                     </span>
-                    <h3 className="text-sm font-bold text-white">Individual Net Balances & Arithmetic</h3>
+                    <h3 className="text-xs sm:text-sm font-bold text-white">Individual Net Balances & Arithmetic</h3>
                   </div>
                   <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                     Zero-Sum Audited
                   </span>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2.5 sm:space-y-3">
                   {reportData.memberBalances.map((mb: any) => {
                     const isPositive = mb.netBalance > 0.009;
                     const isNegative = mb.netBalance < -0.009;
@@ -351,11 +388,11 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                     return (
                       <div
                         key={mb.userId}
-                        className="bg-[#111b21] p-4 rounded-2xl border border-slate-800 space-y-3"
+                        className="bg-[#111b21] p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-800 space-y-2.5"
                       >
-                        {/* Member Identity & Net Balance */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <div className="flex items-center gap-3">
+                        {/* Member Identity & Net Balance Row */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <div className="w-9 h-9 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-slate-200 overflow-hidden flex-shrink-0">
                               {mb.avatar ? (
                                 <img src={mb.avatar} alt="" className="w-full h-full object-cover" />
@@ -363,68 +400,69 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                                 mb.name?.[0] || 'M'
                               )}
                             </div>
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-white text-xs">{mb.name}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-white text-xs sm:text-sm truncate">{mb.name}</span>
                                 {mb.role === 'ADMIN' && (
-                                  <span className="text-[9px] font-extrabold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
+                                  <span className="text-[9px] font-extrabold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20 flex-shrink-0">
                                     ADMIN
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[10px] text-slate-400">
-                                Amount Paid: {formatCurr(mb.totalPaid)} • Actual Expense Share: {formatCurr(mb.totalShare)}
-                              </span>
+                              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
+                                Paid: {formatCurr(mb.totalPaid)} • Share: {formatCurr(mb.totalShare)}
+                              </p>
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between sm:justify-end gap-3 pl-12 sm:pl-0">
-                            <div className="text-right">
-                              <span
-                                className={`font-extrabold text-xs block ${
-                                  isPositive
-                                    ? 'text-emerald-400'
-                                    : isNegative
-                                    ? 'text-rose-400'
-                                    : 'text-slate-400'
-                                }`}
-                              >
-                                {isPositive && '+'}
-                                {formatCurr(mb.netBalance)}
-                              </span>
-                              <span className="text-[9px] uppercase font-bold text-slate-500">
-                                Final Net Balance ({isPositive ? 'Receives' : isNegative ? 'Owes' : 'Balanced'})
-                              </span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedMembers((prev) => ({
-                                  ...prev,
-                                  [mb.userId]: !prev[mb.userId]
-                                }))
-                              }
-                              className="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 shadow-sm"
+                          <div className="text-right flex-shrink-0">
+                            <span
+                              className={`font-black text-xs sm:text-sm block ${
+                                isPositive
+                                  ? 'text-emerald-400'
+                                  : isNegative
+                                  ? 'text-rose-400'
+                                  : 'text-slate-400'
+                              }`}
                             >
-                              <Calculator className="w-3 h-3 text-indigo-400" />
-                              <span>How is this calculated?</span>
-                            </button>
+                              {isPositive && '+'}
+                              {formatCurr(mb.netBalance)}
+                            </span>
+                            <span className="text-[8.5px] sm:text-[9px] uppercase font-bold text-slate-500 block">
+                              {isPositive ? 'Receives' : isNegative ? 'Owes' : 'Balanced'}
+                            </span>
                           </div>
+                        </div>
+
+                        {/* Action Row: How is this calculated button */}
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedMembers((prev) => ({
+                                ...prev,
+                                [mb.userId]: !prev[mb.userId]
+                              }))
+                            }
+                            className="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 shadow-sm active:scale-95"
+                          >
+                            <Calculator className="w-3 h-3 text-indigo-400" />
+                            <span>{expandedMembers[mb.userId] ? 'Hide arithmetic' : 'How is this calculated?'}</span>
+                          </button>
                         </div>
 
                         {/* Explicit Arithmetic Breakdown Box */}
                         {expandedMembers[mb.userId] && (
-                          <div className="bg-[#1a2329] p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
+                          <div className="bg-[#1a2329] p-2.5 sm:p-3 rounded-xl border border-slate-800/80 text-[10.5px] sm:text-[11px] space-y-1.5 animate-in fade-in duration-150">
                             <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center justify-between">
                               <span>Explicit Calculation Arithmetic</span>
-                              <span className="text-slate-500 font-mono">Paid - Actual Share + Settled Paid - Settled Recv = Final</span>
+                              <span className="text-slate-500 font-mono text-[9px] hidden sm:inline">Paid - Share + Settled Paid - Settled Recv = Final</span>
                             </div>
-                            <div className="font-mono text-slate-300 text-[10.5px] overflow-x-auto whitespace-nowrap bg-[#111b21] p-2 rounded-lg border border-slate-800">
+                            <div className="font-mono text-slate-300 text-[10px] sm:text-[10.5px] overflow-x-auto whitespace-nowrap bg-[#111b21] p-2 rounded-lg border border-slate-800">
                               {`Amount Paid (${formatCurr(mb.totalPaid)}) - Actual Share (${formatCurr(mb.totalShare)}) + Confirmed Paid (${formatCurr(mb.settlementsPaid)}) - Confirmed Recv (${formatCurr(mb.settlementsReceived)}) = Final Balance (${formatCurr(mb.netBalance)})`}
                             </div>
                             <p
-                              className={`font-semibold text-[11px] ${
+                              className={`font-semibold text-[10.5px] sm:text-[11px] ${
                                 isPositive
                                   ? 'text-emerald-400'
                                   : isNegative
@@ -448,13 +486,13 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
               </div>
 
               {/* SECTION D: SUGGESTED SETTLEMENTS */}
-              <div className="bg-[#1f2c34] p-5 rounded-3xl border border-slate-700/60 space-y-4">
+              <div className="bg-[#1f2c34] p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-700/60 space-y-3 sm:space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
                       Section D • Suggested Settlements
                     </span>
-                    <h3 className="text-sm font-bold text-white">Who Pays Whom (Minimal Transactions)</h3>
+                    <h3 className="text-xs sm:text-sm font-bold text-white">Who Pays Whom (Minimal Transactions)</h3>
                   </div>
                   <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
                     Proposed Transfers
@@ -462,7 +500,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                 </div>
 
                 {reportData.suggestedSettlements?.length === 0 ? (
-                  <div className="bg-[#111b21] p-6 rounded-2xl border border-slate-800 text-center space-y-1">
+                  <div className="bg-[#111b21] p-5 sm:p-6 rounded-2xl border border-slate-800 text-center space-y-1">
                     <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-1" />
                     <p className="text-xs font-semibold text-slate-200">All member balances are settled.</p>
                     <p className="text-[11px] text-slate-500">
@@ -474,27 +512,27 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                     {reportData.suggestedSettlements.map((s: any, idx: number) => (
                       <div
                         key={idx}
-                        className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                        className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-slate-300">
+                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-slate-300 flex-shrink-0">
                             {s.fromUser?.name?.[0] || 'P'}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-1.5 font-bold text-white">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 font-bold text-white flex-wrap">
                               <span>{s.fromUser?.name}</span>
                               <span className="text-slate-500 font-normal">pays</span>
                               <span className="text-emerald-400 font-extrabold">{formatCurr(s.amount)}</span>
                               <span className="text-slate-500 font-normal">to</span>
                               <span>{s.toUser?.name}</span>
                             </div>
-                            <span className="text-[10px] text-slate-400">
+                            <span className="text-[10px] text-slate-400 block truncate">
                               Suggested transfer to resolve outstanding balance
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 pl-11 sm:pl-0">
+                        <div className="flex items-center justify-start sm:justify-end gap-2 flex-wrap pt-0.5 sm:pt-0">
                           <button
                             onClick={() =>
                               setExplanationModal({
@@ -503,7 +541,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                                 data: s
                               })
                             }
-                            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-[10px] font-bold transition-all flex items-center gap-1"
+                            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 active:scale-95"
                           >
                             <HelpCircle className="w-3 h-3 text-indigo-400" />
                             <span>How is this calculated?</span>
@@ -512,7 +550,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                           {!isClosed && (
                             <button
                               onClick={() => setRecordingSettlement(s)}
-                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 shadow-sm"
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 shadow-sm active:scale-95"
                             >
                               <CreditCard className="w-3 h-3" />
                               <span>Record Payment</span>
@@ -526,16 +564,16 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
               </div>
 
               {/* SECTION E: SETTLEMENT TRANSACTION HISTORY */}
-              <div className="bg-[#1f2c34] p-5 rounded-3xl border border-slate-700/60 space-y-4">
+              <div className="bg-[#1f2c34] p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-700/60 space-y-3 sm:space-y-4">
                 <div>
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
                     Section E • Settlement Transaction History
                   </span>
-                  <h3 className="text-sm font-bold text-white">Confirmed Payments & Audit Log</h3>
+                  <h3 className="text-xs sm:text-sm font-bold text-white">Confirmed Payments & Audit Log</h3>
                 </div>
 
                 {reportData.settlementHistory.length === 0 ? (
-                  <div className="bg-[#111b21] p-6 rounded-2xl border border-slate-800 text-center space-y-1">
+                  <div className="bg-[#111b21] p-5 sm:p-6 rounded-2xl border border-slate-800 text-center space-y-1">
                     <p className="text-xs font-semibold text-slate-300">No settlement transactions recorded yet.</p>
                     <p className="text-[11px] text-slate-500">
                       When members confirm payments, full transaction history will appear here.
@@ -544,16 +582,16 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                 ) : (
                   <div className="divide-y divide-slate-800 bg-[#111b21] rounded-2xl border border-slate-800 overflow-hidden max-h-56 overflow-y-auto">
                     {reportData.settlementHistory.map((s: any) => (
-                      <div key={s._id} className="p-3.5 flex items-center justify-between text-xs">
-                        <div>
-                          <div className="flex items-center gap-1.5 font-bold text-slate-200">
+                      <div key={s._id} className="p-3 sm:p-3.5 flex items-center justify-between text-xs gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 font-bold text-slate-200 flex-wrap">
                             <span>{s.fromUser?.name || 'Member'}</span>
                             <span className="text-slate-500 font-normal">paid</span>
                             <span className="text-emerald-400 font-extrabold">{formatCurr(s.amount)}</span>
                             <span className="text-slate-500 font-normal">to</span>
                             <span>{s.toUser?.name || 'Member'}</span>
                           </div>
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-slate-400 block truncate">
                             {s.paidAt || s.createdAt
                               ? new Date(s.paidAt || s.createdAt).toLocaleDateString([], {
                                   month: 'short',
@@ -567,7 +605,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                           </span>
                         </div>
 
-                        <div className="text-right">
+                        <div className="text-right flex-shrink-0">
                           <span
                             className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${
                               s.status === 'PAID'
@@ -585,64 +623,64 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
               </div>
 
               {/* SECTION F: FINANCIAL RECONCILIATION */}
-              <div className="bg-[#1f2c34] p-5 rounded-3xl border border-slate-700/60 space-y-3">
+              <div className="bg-[#1f2c34] p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-700/60 space-y-3">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
                   Section F • Financial Reconciliation
                 </span>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Expenses</span>
-                    <span className="text-sm font-extrabold text-white">
+                    <span className="text-xs sm:text-sm font-extrabold text-white">
                       {formatCurr(overview.totalExpenses)}
                     </span>
                   </div>
 
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] text-slate-400 block uppercase font-bold">Confirmed Settled</span>
-                    <span className="text-sm font-extrabold text-emerald-400">
+                    <span className="text-xs sm:text-sm font-extrabold text-emerald-400">
                       {formatCurr(overview.totalSettledAmount)}
                     </span>
                   </div>
 
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] text-slate-400 block uppercase font-bold">Creditors (To Receive)</span>
-                    <span className="text-sm font-extrabold text-emerald-400">
+                    <span className="text-xs sm:text-sm font-extrabold text-emerald-400">
                       {formatCurr(overview.totalOutstandingCreditorBalances)}
                     </span>
                   </div>
 
-                  <div className="bg-[#111b21] p-3 rounded-2xl border border-slate-800">
+                  <div className="bg-[#111b21] p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-800">
                     <span className="text-[10px] text-slate-400 block uppercase font-bold">Debtors (To Pay)</span>
-                    <span className="text-sm font-extrabold text-rose-400">
+                    <span className="text-xs sm:text-sm font-extrabold text-rose-400">
                       {formatCurr(overview.totalOutstandingDebtorBalances)}
                     </span>
                   </div>
                 </div>
 
                 {/* Redistribution Note */}
-                <div className="p-3 bg-[#111b21] rounded-xl border border-slate-800 text-[11px] text-slate-400 italic">
+                <div className="p-2.5 sm:p-3 bg-[#111b21] rounded-xl border border-slate-800 text-[10.5px] sm:text-[11px] text-slate-400 italic">
                   Note: Settlement transfers redistribute money between members to reconcile balances; they do not create additional trip expenses.
                 </div>
               </div>
 
               {/* ADMIN ACTIONS: FINISH OR CLOSE TRIP */}
               {isAdmin && !isClosed && (
-                <div className="p-4 rounded-3xl bg-[#1f2c34] border border-slate-700/60 space-y-3">
+                <div className="p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl bg-[#1f2c34] border border-slate-700/60 space-y-3">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
                     Admin Trip Lifecycle Controls
                   </span>
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     {!isCompleted ? (
-                      <div className="flex-1 min-w-[240px]">
+                      <div className="flex-1 min-w-[200px]">
                         <p className="text-xs text-slate-300 font-semibold">Ready to finish this trip?</p>
                         <p className="text-[11px] text-slate-400">
                           Review totals and confirm conclusion. Expenses and settlements will remain accessible.
                         </p>
                       </div>
                     ) : (
-                      <div className="flex-1 min-w-[240px]">
+                      <div className="flex-1 min-w-[200px]">
                         <p className="text-xs text-slate-300 font-semibold">
                           {isSettled ? 'Ready to Close & Archive Trip' : 'Settlements Pending'}
                         </p>
@@ -662,7 +700,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                             onClose();
                             onOpenFinishConfirmation();
                           }}
-                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 active:scale-95"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Finish Trip</span>
@@ -674,7 +712,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                           type="button"
                           onClick={handleCloseAndArchive}
                           disabled={!isSettled || closingTrip}
-                          className={`px-4 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 ${
+                          className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 active:scale-95 ${
                             isSettled
                               ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md'
                               : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
@@ -703,16 +741,20 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
         </div>
 
         {/* Footer Bar */}
-        <div className="p-4 border-t border-slate-800 bg-[#1f2c34]/70 flex items-center justify-between text-xs">
-          <span className="text-[11px] text-slate-400">
+        <div className="p-3 sm:p-4 border-t border-slate-800 bg-[#1f2c34]/95 backdrop-blur sticky bottom-0 z-10 flex items-center justify-between gap-3 text-xs">
+          <span className="text-[11px] text-slate-400 truncate hidden sm:inline">
             TripMate Authoritative Settlement Report • Zero-Sum Audited
           </span>
           <button
             onClick={handleDownloadPdf}
             disabled={loading || !reportData || downloadingPdf}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5"
+            className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95"
           >
-            <Download className="w-3.5 h-3.5" />
+            {downloadingPdf ? (
+              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
             <span>Download PDF</span>
           </button>
         </div>
@@ -736,7 +778,8 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
         settlementData={recordingSettlement}
         currency={curr}
         onSettlementRecorded={() => {
-          fetchReport();
+          invalidateTripReportCache(tripId);
+          fetchReport(true);
         }}
       />
     </div>

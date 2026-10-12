@@ -127,7 +127,7 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
       {showAttachmentMenu && (
         <div
           ref={menuRef}
-          className="absolute bottom-16 left-4 z-40 bg-[#1f2c34] border border-slate-700/80 p-3 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-3 fade-in duration-200 w-64 sm:w-72"
+          className="absolute bottom-16 left-2 sm:left-4 z-40 bg-[#1f2c34] border border-slate-700/80 p-3 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-3 fade-in duration-200 w-[calc(100vw-20px)] max-w-xs sm:w-72"
         >
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-700/60">
             <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Add to Trip</span>

@@ -107,10 +107,10 @@ export const ExpenseMessageCard: React.FC<ExpenseMessageCardProps> = ({
   return (
     <div
       onClick={() => onSelect(expense)}
-      className="bg-[#1e262c] border border-slate-700/80 hover:border-emerald-500/50 rounded-2xl p-4 cursor-pointer transition-all shadow-xl flex flex-col space-y-3 min-w-[260px] sm:min-w-[300px] max-w-sm group text-left relative"
+      className="bg-[#1e262c] border border-slate-700/80 hover:border-emerald-500/50 rounded-2xl p-3.5 sm:p-4 cursor-pointer transition-all shadow-xl flex flex-col space-y-2.5 sm:space-y-3 w-full max-w-sm group text-left relative"
     >
       {/* Top Header: GPay Payment Tag & Options Menu */}
-      <div className="flex items-center justify-between border-b border-slate-700/60 pb-2.5">
+      <div className="flex items-center justify-between border-b border-slate-700/60 pb-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
           <CreditCard className="w-4 h-4 text-emerald-400" />
           <span className="tracking-wide uppercase text-[11px] font-bold">Payment</span>
@@ -206,16 +206,16 @@ export const ExpenseMessageCard: React.FC<ExpenseMessageCardProps> = ({
       {/* Split Details & Payment Summary */}
       <div className="pt-2 border-t border-slate-700/60 text-[11px] text-slate-300 space-y-1">
         <p>Paid by <strong className="text-white font-semibold">{payerName}</strong></p>
-        <p className="flex items-center justify-between text-slate-400">
+        <div className="flex flex-wrap items-center justify-between gap-1 text-slate-400">
           <span>Split among {participantCount} members</span>
           {!isFullySettled && (
             <span className="text-amber-300 font-medium">{paidCount} paid · ₹{remainingAmount.toLocaleString()} remaining</span>
           )}
-        </p>
+        </div>
 
         {/* User Share Banner */}
         {isUserPending && (
-          <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-center justify-between">
+          <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex flex-wrap items-center justify-between gap-1">
             <div>
               <span className="text-[10px] text-amber-400 font-bold block uppercase">Your Share</span>
               <span className="font-extrabold text-xs">₹{userShare.toLocaleString()}</span>

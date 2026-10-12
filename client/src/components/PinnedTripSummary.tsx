@@ -30,22 +30,22 @@ export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
   const percentage = totalBudget > 0 ? Math.min(100, Math.round((totalSpent / totalBudget) * 100)) : 0;
 
   return (
-    <div className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 py-2.5 sticky top-14 z-20 transition-all shadow-md">
+    <div className="bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-4 py-2 sm:py-2.5 sticky top-14 z-20 transition-all shadow-md">
       {isCollapsed ? (
         /* Collapsed Single Compact Bar */
-        <div className="flex items-center justify-between text-xs text-slate-300">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-100">
+        <div className="flex items-center justify-between text-xs text-slate-300 gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-1 truncate">
+            <span className="font-semibold text-slate-100 truncate">
               ₹{totalSpent.toLocaleString()} spent of ₹{totalBudget.toLocaleString()}
             </span>
-            <span className="text-[10px] text-slate-400 font-medium">({percentage}%)</span>
+            <span className="text-[10px] text-slate-400 font-medium flex-shrink-0">({percentage}%)</span>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {onOpenTripReport && (
               <button
                 onClick={onOpenTripReport}
-                className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20"
+                className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 active:scale-95"
               >
                 <FileText className="w-3 h-3" />
                 <span>Summary</span>
@@ -55,7 +55,7 @@ export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
               onClick={onOpenTripInfo}
               className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 hover:underline"
             >
-              Trip Info
+              Info
             </button>
             <button
               onClick={() => setIsCollapsed(false)}
@@ -67,22 +67,22 @@ export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
         </div>
       ) : (
         /* Full Compact Pinned Summary */
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
                 Pinned Summary
               </span>
-              <span className="text-xs text-slate-400 font-medium">
+              <span className="text-xs text-slate-400 font-medium truncate min-w-0">
                 {trip.destination} • {members.length} members
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
               {onOpenTripReport && (
                 <button
                   onClick={onOpenTripReport}
-                  className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 rounded-lg border border-emerald-500/20 transition-all"
+                  className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 sm:px-2.5 py-1 rounded-lg border border-emerald-500/20 transition-all active:scale-95"
                   title="View Trip Summary & Final Report"
                 >
                   <FileText className="w-3.5 h-3.5" />

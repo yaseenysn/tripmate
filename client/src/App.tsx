@@ -43,7 +43,7 @@ import {
   apiJoinWithToken, apiDeleteExpense, apiDeleteTrip
 } from './services/api';
 import { joinTripRoom, leaveTripRoom, getSocket } from './services/socket';
-import { getTripCache, setTripCache, updateTripCacheItem, clearTripCache, deleteTripCache } from './services/tripCache';
+import { getTripCache, isTripCacheFresh, setTripCache, updateTripCacheItem, invalidateTripReportCache, clearTripCache, deleteTripCache } from './services/tripCache';
 import { Compass, MessageSquare, AlertCircle } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -57,6 +57,7 @@ export const App: React.FC = () => {
   // Active Trip Race-Condition & Sequencing Controls
   const activeTripIdRef = useRef<string | null>(null);
   const loadSeqRef = useRef<number>(0);
+  const inFlightLoadsRef = useRef<Map<string, Promise<any>>>(new Map());
 
   // Workspace State
   const [tripData, setTripData] = useState<any>(null);
@@ -291,7 +292,14 @@ export const App: React.FC = () => {
         setWorkspaceLoading(false);
         setWorkspaceError(null);
 
+        // If cached data is fresh (within TTL), skip redundant background fetch storm!
+        if (isTripCacheFresh(tId)) {
+          console.log(`[TripCache] Fresh cache HIT for ${tId}, skipping redundant background re-fetch`);
+          return;
+        }
+
         // Trigger background refresh to fetch fresh data without blocking the UI
+        console.log(`[TripCache] Stale cache HIT for ${tId}, scheduling background revalidation`);
         loadWorkspaceData(tId, true);
         return;
       } else {
@@ -323,10 +331,11 @@ export const App: React.FC = () => {
       }
     };
 
-    try {
-      const detailsRes = await apiGetTripDetails(tId);
-      const [expRes, budRes, itinRes, bookRes, setRes, taskRes, pollRes, docRes, actRes, notifRes] =
+    // Parallel fetch worker for all 10 workspace endpoints
+    const executeFetch = async () => {
+      const [detailsRes, expRes, budRes, itinRes, bookRes, setRes, taskRes, pollRes, docRes, actRes] =
         await Promise.all([
+          apiGetTripDetails(tId),
           safeFetch(apiGetExpenses(tId), { expenses: [] }),
           safeFetch(apiGetBudget(tId), null),
           safeFetch(apiGetItinerary(tId), { items: [] }),
@@ -336,14 +345,13 @@ export const App: React.FC = () => {
           safeFetch(apiGetPolls(tId), { polls: [] }),
           safeFetch(apiGetDocuments(tId), { documents: [] }),
           safeFetch(apiGetActivity(tId), { activities: [] }),
-          safeFetch(apiGetNotifications(), { notifications: [] }),
         ]);
 
       const fetchedActivities = (actRes.activities || []).filter(
         (a: any) => !a.tripId || String(a.tripId?._id || a.tripId) === tId
       );
 
-      const workspacePayload = {
+      return {
         trip: detailsRes.trip,
         members: detailsRes.members || [],
         expenses: expRes.expenses || [],
@@ -356,6 +364,17 @@ export const App: React.FC = () => {
         documents: docRes.documents || [],
         activities: fetchedActivities,
       };
+    };
+
+    try {
+      // In-flight request deduplication: reuse running request if active
+      let fetchPromise = inFlightLoadsRef.current.get(tId);
+      if (!fetchPromise) {
+        fetchPromise = executeFetch();
+        inFlightLoadsRef.current.set(tId, fetchPromise);
+      }
+
+      const workspacePayload = await fetchPromise;
 
       setTripCache(tId, workspacePayload);
 
@@ -386,16 +405,14 @@ export const App: React.FC = () => {
         );
         return mergeActivities(workspacePayload.activities, pendingForThisTrip, tId);
       });
-
-      if (notifRes.notifications) {
-        setNotifications(notifRes.notifications);
-      }
     } catch (err: any) {
       if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
         console.error('[Workspace] Error loading workspace data:', err);
         setWorkspaceError(err?.message || 'Failed to load trip group data. Tap to retry.');
         setWorkspaceLoading(false);
       }
+    } finally {
+      inFlightLoadsRef.current.delete(tId);
     }
   };
 
@@ -454,14 +471,28 @@ export const App: React.FC = () => {
         }
       };
 
+      const handleExpenseSyncWithInvalidation = (payload?: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || activeTripIdRef.current || '');
+        if (targetTripId) {
+          invalidateTripReportCache(targetTripId);
+        }
+        handleWorkspaceSync();
+      };
+
       const handleExpenseUpdated = (updatedExpense: any) => {
         if (!updatedExpense || !updatedExpense._id) {
-          handleWorkspaceSync();
+          handleExpenseSyncWithInvalidation();
           return;
         }
         const expIdStr = String(updatedExpense._id);
         const expTripId = String(updatedExpense.tripId?._id || updatedExpense.tripId || '').trim();
         const activeIdNormalized = String(activeTripIdRef.current || activeTripId || '').trim();
+
+        if (expTripId) {
+          invalidateTripReportCache(expTripId);
+        } else if (activeIdNormalized) {
+          invalidateTripReportCache(activeIdNormalized);
+        }
 
         if (expTripId && activeIdNormalized && expTripId !== activeIdNormalized) {
           // Event belongs to a different trip, do not modify current active trip state
@@ -542,9 +573,9 @@ export const App: React.FC = () => {
       };
 
       socket.on('activity.created', handleActivityCreated);
-      socket.on('expense.created', handleWorkspaceSync);
+      socket.on('expense.created', handleExpenseSyncWithInvalidation);
       socket.on('expense.updated', handleExpenseUpdated);
-      socket.on('expense.deleted', handleWorkspaceSync);
+      socket.on('expense.deleted', handleExpenseSyncWithInvalidation);
       socket.on('member.joined', handleWorkspaceSync);
       socket.on('member.removed', handleWorkspaceSync);
       socket.on('itinerary.created', handleWorkspaceSync);
@@ -552,16 +583,16 @@ export const App: React.FC = () => {
       socket.on('booking.created', handleWorkspaceSync);
       socket.on('task.updated', handleWorkspaceSync);
       socket.on('poll.voted', handleWorkspaceSync);
-      socket.on('settlement.updated', handleWorkspaceSync);
+      socket.on('settlement.updated', handleExpenseSyncWithInvalidation);
       socket.on('trip.updated', handleTripUpdated);
       socket.on('trip.lifecycle', handleTripLifecycle);
 
       return () => {
         leaveTripRoom(activeTripId);
         socket.off('activity.created', handleActivityCreated);
-        socket.off('expense.created', handleWorkspaceSync);
+        socket.off('expense.created', handleExpenseSyncWithInvalidation);
         socket.off('expense.updated', handleExpenseUpdated);
-        socket.off('expense.deleted', handleWorkspaceSync);
+        socket.off('expense.deleted', handleExpenseSyncWithInvalidation);
         socket.off('member.joined', handleWorkspaceSync);
         socket.off('member.removed', handleWorkspaceSync);
         socket.off('itinerary.created', handleWorkspaceSync);
@@ -569,7 +600,7 @@ export const App: React.FC = () => {
         socket.off('booking.created', handleWorkspaceSync);
         socket.off('task.updated', handleWorkspaceSync);
         socket.off('poll.voted', handleWorkspaceSync);
-        socket.off('settlement.updated', handleWorkspaceSync);
+        socket.off('settlement.updated', handleExpenseSyncWithInvalidation);
         socket.off('trip.updated', handleTripUpdated);
         socket.off('trip.lifecycle', handleTripLifecycle);
       };
@@ -662,6 +693,7 @@ export const App: React.FC = () => {
   const handleDeleteExpense = async (id: string) => {
     if (!activeTripId) return;
     try {
+      invalidateTripReportCache(activeTripId);
       await apiDeleteExpense(activeTripId, id);
       loadWorkspaceData(activeTripId);
     } catch (err) {
@@ -1059,7 +1091,10 @@ export const App: React.FC = () => {
             members={members}
             currentUser={user}
             expenseToEdit={expenseToEdit}
-            onSuccess={() => loadWorkspaceData(activeTripId)}
+            onSuccess={() => {
+              if (activeTripId) invalidateTripReportCache(activeTripId);
+              loadWorkspaceData(activeTripId);
+            }}
           />
 
           {paySplitInfo && (
@@ -1071,6 +1106,7 @@ export const App: React.FC = () => {
               userShare={paySplitInfo.userShare}
               payerName={paySplitInfo.payerName}
               onSuccess={(updatedExpense?: any) => {
+                if (activeTripId) invalidateTripReportCache(activeTripId);
                 if (updatedExpense) {
                   // In-place update of existing card immediately
                   setExpenses((prev) =>

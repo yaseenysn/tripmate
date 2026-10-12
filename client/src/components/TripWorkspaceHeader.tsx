@@ -39,9 +39,9 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
     : 'No members';
 
   return (
-    <div className="bg-[#111b21] border-b border-slate-800/80 px-3.5 py-2.5 flex-shrink-0 z-30 flex items-center justify-between gap-3 shadow-md select-none">
+    <div className="bg-[#111b21] border-b border-slate-800/80 px-2.5 sm:px-3.5 py-2 sm:py-2.5 flex-shrink-0 z-30 flex items-center justify-between gap-2 sm:gap-3 shadow-md select-none">
       {/* Left Side: Back Arrow (Mobile) + Circular Group Avatar + Group Title & Members */}
-      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
         <button
           onClick={onBackMobile}
           className="p-1.5 text-slate-300 hover:text-white rounded-full hover:bg-slate-800 md:hidden flex-shrink-0 transition-colors"
@@ -52,10 +52,10 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
 
         <div
           onClick={onOpenTripInfo}
-          className="flex items-center gap-3 cursor-pointer min-w-0 flex-1 group"
+          className="flex items-center gap-2.5 sm:gap-3 cursor-pointer min-w-0 flex-1 group"
         >
           {/* Circular Group Image */}
-          <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700/80 flex items-center justify-center text-lg flex-shrink-0 overflow-hidden shadow-inner">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-800 border border-slate-700/80 flex items-center justify-center text-base sm:text-lg flex-shrink-0 overflow-hidden shadow-inner">
             {trip.coverImage ? (
               <img src={trip.coverImage} alt={trip.name} className="w-full h-full object-cover" />
             ) : (
@@ -65,7 +65,7 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <h2 className="font-bold text-slate-100 text-sm sm:text-base group-hover:text-emerald-400 transition-colors truncate">
+              <h2 className="font-bold text-slate-100 text-xs sm:text-base group-hover:text-emerald-400 transition-colors truncate">
                 {trip.name}
               </h2>
               {isAdmin && (
@@ -74,7 +74,7 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 truncate font-normal">
+            <p className="text-[11px] sm:text-xs text-slate-400 truncate font-normal">
               {members.length} member{members.length !== 1 ? 's' : ''} • <span className="text-slate-400">{memberNamesText}</span>
             </p>
           </div>
@@ -82,11 +82,11 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
       </div>
 
       {/* Right Side Actions: Search, Invite, Group Info Menu */}
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
         {onSearchClick && (
           <button
             onClick={onSearchClick}
-            className="p-2 text-slate-300 hover:text-white rounded-full hover:bg-slate-800/80 transition-colors"
+            className="p-1.5 sm:p-2 text-slate-300 hover:text-white rounded-full hover:bg-slate-800/80 transition-colors"
             title="Search in Chat"
           >
             <Search className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -95,7 +95,7 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
 
         <button
           onClick={onOpenInvite}
-          className="p-1.5 text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-full hover:bg-emerald-500/20 transition-all flex items-center gap-1 px-2.5 text-xs font-semibold"
+          className="p-1.5 text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-full hover:bg-emerald-500/20 transition-all flex items-center gap-1 px-2 sm:px-2.5 text-xs font-semibold"
           title="Invite Members"
         >
           <UserPlus className="w-3.5 h-3.5" />
@@ -115,10 +115,10 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
 
         <button
           onClick={onOpenTripInfo}
-          className="p-2 text-slate-300 hover:text-white rounded-full hover:bg-slate-800/80 transition-colors"
+          className="p-1.5 sm:p-2 text-slate-300 hover:text-white rounded-full hover:bg-slate-800/80 transition-colors"
           title="Group Info & Menu"
         >
-          <MoreVertical className="w-5 h-5" />
+          <MoreVertical className="w-4 h-4 sm:w-5 sm:h-5" />
         </button>
       </div>
     </div>
