@@ -78,7 +78,13 @@ router.post('/:id/polls', authenticateToken, requireTripMembership, requireNotCl
 
     const populated = await Poll.findById(poll._id).populate('createdBy', 'name avatar');
 
-    await logActivity(tripId, userId, 'POLL_CREATED', `created poll "${question}"`);
+    await logActivity(
+      tripId,
+      userId,
+      'POLL_CREATED',
+      `created poll "${question}"`,
+      { pollId: poll._id, poll: populated }
+    );
     emitToTrip(tripId, 'poll.created', populated);
 
     res.status(201).json({ poll: populated });

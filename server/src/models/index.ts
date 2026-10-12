@@ -290,7 +290,7 @@ export const Booking = mongoose.model<IBooking>('Booking', BookingSchema);
 export interface IDocument extends Document {
   tripId: mongoose.Types.ObjectId;
   name: string;
-  type: 'TICKET' | 'RECEIPT' | 'CONFIRMATION' | 'ID' | 'OTHER';
+  type: 'TICKET' | 'RECEIPT' | 'CONFIRMATION' | 'ID' | 'PHOTO' | 'OTHER';
   fileUrl: string;
   publicId?: string;
   fileSize: string;
@@ -303,7 +303,7 @@ const DocumentSchema = new Schema<IDocument>({
   name: { type: String, required: true },
   type: { 
     type: String, 
-    enum: ['TICKET', 'RECEIPT', 'CONFIRMATION', 'ID', 'OTHER'],
+    enum: ['TICKET', 'RECEIPT', 'CONFIRMATION', 'ID', 'PHOTO', 'OTHER'],
     default: 'OTHER' 
   },
   fileUrl: { type: String, required: true },

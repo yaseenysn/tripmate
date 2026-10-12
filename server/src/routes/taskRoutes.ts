@@ -49,7 +49,13 @@ router.post('/:id/tasks', authenticateToken, requireTripMembership, requireNotCl
       .populate('assignedTo', 'name avatar email')
       .populate('createdBy', 'name avatar');
 
-    await logActivity(tripId, userId, 'TASK_CREATED', `created task "${title}"`);
+    await logActivity(
+      tripId,
+      userId,
+      'TASK_CREATED',
+      `created task "${title}"`,
+      { taskId: task._id, task: populated }
+    );
 
     if (assignedTo && assignedTo !== userId) {
       await createNotification(assignedTo, 'New Task Assigned', `You were assigned task "${title}"`, 'TASK', tripId);

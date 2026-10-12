@@ -1,9 +1,15 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { ExpenseMessageCard } from './ExpenseMessageCard';
 import {
-  Calendar, Ticket, CheckSquare, Vote, FileText,
-  ChevronRight, Clock, MapPin, CheckCircle2, Circle
-} from 'lucide-react';
+  PhotoMessageCard,
+  DocumentMessageCard,
+  ItineraryMessageCard,
+  BookingMessageCard,
+  TaskMessageCard,
+  PollMessageCard,
+} from './TripActivityCards';
+import { ImagePreviewModal } from './ImagePreviewModal';
+import { Clock } from 'lucide-react';
 
 interface ActivityFeedProps {
   activities: any[];
@@ -91,6 +97,13 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const [unreadNewMessages, setUnreadNewMessages] = useState<number>(0);
   const [isNearBottom, setIsNearBottom] = useState<boolean>(true);
+  const [previewPhoto, setPreviewPhoto] = useState<{
+    url: string;
+    title: string;
+    uploader?: string;
+    date?: any;
+    size?: string;
+  } | null>(null);
 
   // Monitor container scroll position to handle "New Messages" indicator
   const handleScroll = () => {
@@ -187,6 +200,22 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   });
 
   const renderedExpenseIds = new Set<string>();
+  const renderedDocIds = new Set<string>();
+  const renderedItineraryIds = new Set<string>();
+  const renderedBookingIds = new Set<string>();
+  const renderedTaskIds = new Set<string>();
+  const renderedPollIds = new Set<string>();
+
+  const extractQuoted = (desc: string = ''): string => {
+    const match = desc.match(/['"“]([^'"”]+)['"”]/);
+    return match ? match[1].trim() : '';
+  };
+
+  const isImageFile = (filename: string = '', mimeType: string = '', docType: string = '') => {
+    if (docType === 'PHOTO') return true;
+    if (mimeType && mimeType.startsWith('image/')) return true;
+    return /\.(png|jpe?g|webp|gif|svg|bmp|heic)$/i.test(filename || '');
+  };
 
   return (
     <div
@@ -237,6 +266,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 actType.includes('JOIN') ||
                 actType.includes('LEAVE') ||
                 actType === 'TRIP_CREATED' ||
+                actType === 'TRIP_UPDATED' ||
                 actType === 'EXPENSE_DELETED';
 
               // System Message Bubble (e.g. "Bilal joined the trip" or "Yaseen deleted expense Dinner")
@@ -270,25 +300,181 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 renderedExpenseIds.add(stableExpId);
               }
 
-              // Check for related itinerary item
-              const relatedItineraryId = act.metadata?.itineraryId;
-              const relatedItinerary = relatedItineraryId ? itinerary.find((it) => String(it._id) === String(relatedItineraryId)) : null;
+              // Document / Photo resolution
+              const isDocOrPhotoAct = actType === 'DOCUMENT_UPLOADED' || actType === 'PHOTO_UPLOADED' || act.metadata?.documentId || act.metadata?.document || /uploaded (document|photo|image)/i.test(act.description || '');
 
-              // Check for related booking
-              const relatedBookingId = act.metadata?.bookingId;
-              const relatedBooking = relatedBookingId ? bookings.find((b) => String(b._id) === String(relatedBookingId)) : null;
+              let relatedDoc: any = null;
+              let isDocOrPhoto = false;
+              let isPhoto = false;
 
-              // Check for related task
-              const relatedTaskId = act.metadata?.taskId;
-              const relatedTask = relatedTaskId ? tasks.find((t) => String(t._id) === String(relatedTaskId)) : null;
+              if (isDocOrPhotoAct) {
+                isDocOrPhoto = true;
+                const targetDocId = act.metadata?.documentId || act.metadata?.document?._id;
+                const quoted = extractQuoted(act.description);
+                relatedDoc = targetDocId
+                  ? documents.find((d) => String(d._id) === String(targetDocId))
+                  : quoted
+                  ? documents.find((d) => d.name?.toLowerCase().includes(quoted.toLowerCase()))
+                  : null;
 
-              // Check for related poll
-              const relatedPollId = act.metadata?.pollId;
-              const relatedPoll = relatedPollId ? polls.find((p) => String(p._id) === String(relatedPollId)) : null;
+                if (!relatedDoc && act.metadata?.document) {
+                  relatedDoc = act.metadata.document;
+                }
 
-              // Check for related document
-              const relatedDocId = act.metadata?.documentId;
-              const relatedDoc = relatedDocId ? documents.find((d) => String(d._id) === String(relatedDocId)) : null;
+                if (!relatedDoc) {
+                  relatedDoc = {
+                    _id: targetDocId || `doc-fallback-${act._id}`,
+                    name: quoted || 'Attachment',
+                    type: actType === 'PHOTO_UPLOADED' || /photo|image/i.test(act.description || '') ? 'PHOTO' : 'DOCUMENT',
+                    fileUrl: act.metadata?.fileUrl || '',
+                    fileSize: act.metadata?.fileSize || '',
+                    uploadedBy: sender,
+                    createdAt: act.createdAt
+                  };
+                }
+
+                isPhoto = isImageFile(relatedDoc.name, '', relatedDoc.type) || actType === 'PHOTO_UPLOADED';
+              }
+
+              // Itinerary resolution
+              const isItineraryAct = actType === 'ITINERARY_ADDED' || actType === 'ITINERARY_UPDATED' || act.metadata?.itineraryId || act.metadata?.itinerary || /itinerary item/i.test(act.description || '');
+
+              let relatedItinerary: any = null;
+              if (isItineraryAct) {
+                const targetItinId = act.metadata?.itineraryId || act.metadata?.itinerary?._id;
+                const quoted = extractQuoted(act.description);
+                relatedItinerary = targetItinId
+                  ? itinerary.find((it) => String(it._id) === String(targetItinId))
+                  : quoted
+                  ? itinerary.find((it) => it.title?.toLowerCase().includes(quoted.toLowerCase()))
+                  : null;
+
+                if (!relatedItinerary && act.metadata?.itinerary) {
+                  relatedItinerary = act.metadata.itinerary;
+                }
+
+                if (!relatedItinerary) {
+                  const dayMatch = (act.description || '').match(/Day\s*(\d+)/i);
+                  relatedItinerary = {
+                    _id: targetItinId || `itin-fallback-${act._id}`,
+                    title: quoted || 'Itinerary Event',
+                    dayNumber: dayMatch ? parseInt(dayMatch[1], 10) : 1
+                  };
+                }
+              }
+
+              // Booking resolution
+              const isBookingAct = actType === 'BOOKING_ADDED' || actType === 'BOOKING_UPDATED' || act.metadata?.bookingId || act.metadata?.booking || /booking/i.test(act.description || '');
+
+              let relatedBooking: any = null;
+              if (isBookingAct) {
+                const targetBookingId = act.metadata?.bookingId || act.metadata?.booking?._id;
+                const quoted = extractQuoted(act.description);
+                relatedBooking = targetBookingId
+                  ? bookings.find((b) => String(b._id) === String(targetBookingId))
+                  : quoted
+                  ? bookings.find((b) => (b.provider && b.provider.toLowerCase().includes(quoted.toLowerCase())) || (b.type && b.type.toLowerCase().includes(quoted.toLowerCase())))
+                  : null;
+
+                if (!relatedBooking && act.metadata?.booking) {
+                  relatedBooking = act.metadata.booking;
+                }
+
+                if (!relatedBooking) {
+                  relatedBooking = {
+                    _id: targetBookingId || `booking-fallback-${act._id}`,
+                    provider: quoted || 'Booking',
+                    type: 'HOTEL'
+                  };
+                }
+              }
+
+              // Task resolution
+              const isTaskAct = actType === 'TASK_ADDED' || actType === 'TASK_UPDATED' || act.metadata?.taskId || act.metadata?.task || /task/i.test(act.description || '');
+
+              let relatedTask: any = null;
+              if (isTaskAct) {
+                const targetTaskId = act.metadata?.taskId || act.metadata?.task?._id;
+                const quoted = extractQuoted(act.description);
+                relatedTask = targetTaskId
+                  ? tasks.find((t) => String(t._id) === String(targetTaskId))
+                  : quoted
+                  ? tasks.find((t) => t.title?.toLowerCase().includes(quoted.toLowerCase()))
+                  : null;
+
+                if (!relatedTask && act.metadata?.task) {
+                  relatedTask = act.metadata.task;
+                }
+
+                if (!relatedTask) {
+                  relatedTask = {
+                    _id: targetTaskId || `task-fallback-${act._id}`,
+                    title: quoted || 'Trip Task',
+                    status: 'TODO',
+                    priority: 'MEDIUM'
+                  };
+                }
+              }
+
+              // Poll resolution
+              const isPollAct = actType === 'POLL_CREATED' || actType === 'POLL_VOTED' || act.metadata?.pollId || act.metadata?.poll || /poll/i.test(act.description || '');
+
+              let relatedPoll: any = null;
+              if (isPollAct) {
+                const targetPollId = act.metadata?.pollId || act.metadata?.poll?._id;
+                const quoted = extractQuoted(act.description);
+                relatedPoll = targetPollId
+                  ? polls.find((p) => String(p._id) === String(targetPollId))
+                  : quoted
+                  ? polls.find((p) => p.question?.toLowerCase().includes(quoted.toLowerCase()))
+                  : null;
+
+                if (!relatedPoll && act.metadata?.poll) {
+                  relatedPoll = act.metadata.poll;
+                }
+
+                if (!relatedPoll) {
+                  relatedPoll = {
+                    _id: targetPollId || `poll-fallback-${act._id}`,
+                    question: quoted || 'Group Poll',
+                    options: []
+                  };
+                }
+              }
+
+              // Check if this is an update activity or a duplicate card in the feed
+              const isUpdateActivity = actType === 'POLL_VOTED' || actType === 'TASK_UPDATED' || actType === 'ITINERARY_UPDATED' || actType === 'BOOKING_UPDATED';
+
+              const docIdStr = String(relatedDoc?._id || '');
+              const itinIdStr = String(relatedItinerary?._id || '');
+              const bookingIdStr = String(relatedBooking?._id || '');
+              const taskIdStr = String(relatedTask?._id || '');
+              const pollIdStr = String(relatedPoll?._id || '');
+
+              const isDuplicateCard =
+                (docIdStr && renderedDocIds.has(docIdStr)) ||
+                (itinIdStr && renderedItineraryIds.has(itinIdStr)) ||
+                (bookingIdStr && renderedBookingIds.has(bookingIdStr)) ||
+                (taskIdStr && renderedTaskIds.has(taskIdStr)) ||
+                (pollIdStr && renderedPollIds.has(pollIdStr));
+
+              if ((isUpdateActivity || isDuplicateCard) && (relatedPoll || relatedTask || relatedItinerary || relatedBooking || relatedDoc) && !shouldRenderExpenseCard) {
+                return (
+                  <div key={act._id || i} className="flex justify-center my-1.5">
+                    <div className="bg-[#182229]/90 border border-slate-800/80 px-3 py-1 rounded-lg text-[11px] text-slate-400 font-medium shadow-sm flex items-center gap-1.5">
+                      <span>{act.description}</span>
+                      <span className="text-[10px] text-slate-500">• {timeStr}</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Register ids in rendered sets
+              if (docIdStr) renderedDocIds.add(docIdStr);
+              if (itinIdStr) renderedItineraryIds.add(itinIdStr);
+              if (bookingIdStr) renderedBookingIds.add(bookingIdStr);
+              if (taskIdStr) renderedTaskIds.add(taskIdStr);
+              if (pollIdStr) renderedPollIds.add(pollIdStr);
 
               // Helper to extract amount from text description if expense object/metadata amount is missing
               const extractAmountFromDescription = (desc: string = ''): number => {
@@ -342,136 +528,113 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                           {timeStr}
                         </div>
                       </div>
-                    ) : relatedItinerary ? (
-                      /* ITINERARY ATTACHMENT CARD */
-                      <div className={`rounded-2xl p-3.5 shadow-md border ${
-                        isSelf ? 'bg-[#005c4b] border-emerald-700/60 text-white' : 'bg-[#202c33] border-slate-700/80 text-slate-100'
-                      }`}>
-                        {!isSelf && <p className={`text-xs font-bold ${nameColor} mb-1.5`}>{senderName}</p>}
-                        <div className="flex items-center gap-2 text-xs font-bold text-cyan-300 mb-1">
-                          <Calendar className="w-4 h-4 text-cyan-400" />
-                          <span>📅 Itinerary</span>
+                    ) : isDocOrPhoto && isPhoto ? (
+                      /* PHOTO CARD */
+                      <div className="space-y-1">
+                        {!isSelf && (
+                          <span className={`text-xs font-bold ${nameColor} px-1 block mb-1`}>
+                            {senderName}
+                          </span>
+                        )}
+                        <PhotoMessageCard
+                          document={relatedDoc}
+                          senderName={senderName}
+                          timestamp={streamItem.timestamp}
+                          isSelf={isSelf}
+                          onOpenPreview={(photo) => setPreviewPhoto(photo)}
+                        />
+                        <div className="text-[10px] text-slate-400 text-right px-1 pt-0.5 flex items-center justify-end gap-1">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
                         </div>
-                        <h4 className="font-bold text-sm text-white">{relatedItinerary.title}</h4>
-                        {relatedItinerary.location && (
-                          <p className="text-xs text-slate-200 flex items-center gap-1 mt-0.5">
-                            <MapPin className="w-3 h-3 text-rose-400" />
-                            <span>{relatedItinerary.location}</span>
-                          </p>
+                      </div>
+                    ) : isDocOrPhoto && !isPhoto ? (
+                      /* DOCUMENT CARD */
+                      <div className="space-y-1">
+                        {!isSelf && (
+                          <span className={`text-xs font-bold ${nameColor} px-1 block mb-1`}>
+                            {senderName}
+                          </span>
                         )}
-                        <p className="text-[11px] text-slate-300 flex items-center gap-1 mt-1">
-                          <Clock className="w-3 h-3 text-cyan-300" />
-                          <span>{relatedItinerary.startTime || 'Scheduled time'}</span>
-                        </p>
-                        {onNavigateSection && (
-                          <button
-                            onClick={() => onNavigateSection('itinerary')}
-                            className="mt-2.5 pt-2 border-t border-white/10 w-full flex items-center justify-between text-xs font-bold text-cyan-300 hover:underline"
-                          >
-                            <span>View itinerary</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
+                        <DocumentMessageCard
+                          document={relatedDoc}
+                          onNavigateSection={onNavigateSection}
+                        />
+                        <div className="text-[10px] text-slate-400 text-right px-1 pt-0.5 flex items-center justify-end gap-1">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
+                        </div>
+                      </div>
+                    ) : relatedItinerary ? (
+                      /* ITINERARY CARD */
+                      <div className="space-y-1">
+                        {!isSelf && (
+                          <span className={`text-xs font-bold ${nameColor} px-1 block mb-1`}>
+                            {senderName}
+                          </span>
                         )}
-                        <span className="block text-[10px] text-slate-300 text-right mt-1">{timeStr}</span>
+                        <ItineraryMessageCard
+                          item={relatedItinerary}
+                          onNavigateSection={onNavigateSection}
+                        />
+                        <div className="text-[10px] text-slate-400 text-right px-1 pt-0.5 flex items-center justify-end gap-1">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
+                        </div>
                       </div>
                     ) : relatedBooking ? (
-                      /* BOOKING ATTACHMENT CARD */
-                      <div className={`rounded-2xl p-3.5 shadow-md border ${
-                        isSelf ? 'bg-[#005c4b] border-emerald-700/60 text-white' : 'bg-[#202c33] border-slate-700/80 text-slate-100'
-                      }`}>
-                        {!isSelf && <p className={`text-xs font-bold ${nameColor} mb-1.5`}>{senderName}</p>}
-                        <div className="flex items-center gap-2 text-xs font-bold text-amber-300 mb-1">
-                          <Ticket className="w-4 h-4 text-amber-400" />
-                          <span>🏨 Booking</span>
+                      /* BOOKING CARD */
+                      <div className="space-y-1">
+                        {!isSelf && (
+                          <span className={`text-xs font-bold ${nameColor} px-1 block mb-1`}>
+                            {senderName}
+                          </span>
+                        )}
+                        <BookingMessageCard
+                          booking={relatedBooking}
+                          onNavigateSection={onNavigateSection}
+                        />
+                        <div className="text-[10px] text-slate-400 text-right px-1 pt-0.5 flex items-center justify-end gap-1">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
                         </div>
-                        <h4 className="font-bold text-sm text-white">{relatedBooking.provider || relatedBooking.type}</h4>
-                        <p className="text-xs text-slate-200 mt-0.5">{relatedBooking.notes || relatedBooking.location || 'Booking Confirmed'}</p>
-                        {relatedBooking.cost > 0 && (
-                          <p className="text-xs font-bold text-amber-300 mt-1">₹{relatedBooking.cost.toLocaleString()}</p>
-                        )}
-                        {onNavigateSection && (
-                          <button
-                            onClick={() => onNavigateSection('bookings')}
-                            className="mt-2.5 pt-2 border-t border-white/10 w-full flex items-center justify-between text-xs font-bold text-amber-300 hover:underline"
-                          >
-                            <span>View booking</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        <span className="block text-[10px] text-slate-300 text-right mt-1">{timeStr}</span>
                       </div>
                     ) : relatedTask ? (
-                      /* TASK ATTACHMENT CARD */
-                      <div className={`rounded-2xl p-3.5 shadow-md border ${
-                        isSelf ? 'bg-[#005c4b] border-emerald-700/60 text-white' : 'bg-[#202c33] border-slate-700/80 text-slate-100'
-                      }`}>
-                        {!isSelf && <p className={`text-xs font-bold ${nameColor} mb-1.5`}>{senderName}</p>}
-                        <div className="flex items-center gap-2 text-xs font-bold text-amber-300 mb-1">
-                          <CheckSquare className="w-4 h-4 text-amber-400" />
-                          <span>✓ Task</span>
-                        </div>
-                        <h4 className="font-bold text-sm text-white">{relatedTask.title}</h4>
-                        <p className="text-xs text-slate-200 mt-0.5">
-                          Status: <span className="font-bold text-emerald-300">{relatedTask.status}</span>
-                        </p>
-                        {onNavigateSection && (
-                          <button
-                            onClick={() => onNavigateSection('tasks')}
-                            className="mt-2.5 pt-2 border-t border-white/10 w-full flex items-center justify-between text-xs font-bold text-amber-300 hover:underline"
-                          >
-                            <span>View tasks</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
+                      /* TASK CARD */
+                      <div className="space-y-1">
+                        {!isSelf && (
+                          <span className={`text-xs font-bold ${nameColor} px-1 block mb-1`}>
+                            {senderName}
+                          </span>
                         )}
-                        <span className="block text-[10px] text-slate-300 text-right mt-1">{timeStr}</span>
+                        <TaskMessageCard
+                          task={relatedTask}
+                          onToggleStatus={onToggleTaskStatus}
+                          onNavigateSection={onNavigateSection}
+                        />
+                        <div className="text-[10px] text-slate-400 text-right px-1 pt-0.5 flex items-center justify-end gap-1">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
+                        </div>
                       </div>
                     ) : relatedPoll ? (
-                      /* POLL ATTACHMENT CARD */
-                      <div className={`rounded-2xl p-3.5 shadow-md border ${
-                        isSelf ? 'bg-[#005c4b] border-emerald-700/60 text-white' : 'bg-[#202c33] border-slate-700/80 text-slate-100'
-                      }`}>
-                        {!isSelf && <p className={`text-xs font-bold ${nameColor} mb-1.5`}>{senderName}</p>}
-                        <div className="flex items-center gap-2 text-xs font-bold text-rose-300 mb-1">
-                          <Vote className="w-4 h-4 text-rose-400" />
-                          <span>📊 Group Poll</span>
-                        </div>
-                        <h4 className="font-bold text-sm text-white mb-2">{relatedPoll.question}</h4>
-                        <div className="space-y-1.5">
-                          {relatedPoll.options?.map((opt: any) => (
-                            <button
-                              key={opt._id}
-                              onClick={() => onVotePoll && onVotePoll(relatedPoll._id, opt._id)}
-                              className="w-full text-left p-2 rounded-xl bg-black/20 hover:bg-black/40 border border-white/10 text-xs font-medium flex items-center justify-between transition-colors"
-                            >
-                              <span>{opt.text}</span>
-                              <Circle className="w-3.5 h-3.5 text-slate-400" />
-                            </button>
-                          ))}
-                        </div>
-                        <span className="block text-[10px] text-slate-300 text-right mt-2">{timeStr}</span>
-                      </div>
-                    ) : relatedDoc ? (
-                      /* DOCUMENT ATTACHMENT CARD */
-                      <div className={`rounded-2xl p-3.5 shadow-md border ${
-                        isSelf ? 'bg-[#005c4b] border-emerald-700/60 text-white' : 'bg-[#202c33] border-slate-700/80 text-slate-100'
-                      }`}>
-                        {!isSelf && <p className={`text-xs font-bold ${nameColor} mb-1.5`}>{senderName}</p>}
-                        <div className="flex items-center gap-2 text-xs font-bold text-blue-300 mb-1">
-                          <FileText className="w-4 h-4 text-blue-400" />
-                          <span>📄 Document</span>
-                        </div>
-                        <h4 className="font-bold text-sm text-white">{relatedDoc.name}</h4>
-                        <p className="text-xs text-slate-200 mt-0.5">{relatedDoc.fileSize || 'Attachment'}</p>
-                        {onNavigateSection && (
-                          <button
-                            onClick={() => onNavigateSection('documents')}
-                            className="mt-2.5 pt-2 border-t border-white/10 w-full flex items-center justify-between text-xs font-bold text-blue-300 hover:underline"
-                          >
-                            <span>View document</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
+                      /* POLL CARD */
+                      <div className="space-y-1">
+                        {!isSelf && (
+                          <span className={`text-xs font-bold ${nameColor} px-1 block mb-1`}>
+                            {senderName}
+                          </span>
                         )}
-                        <span className="block text-[10px] text-slate-300 text-right mt-1">{timeStr}</span>
+                        <PollMessageCard
+                          poll={relatedPoll}
+                          currentUserId={currentUser?._id || currentUser?.id}
+                          onVotePoll={onVotePoll}
+                          onNavigateSection={onNavigateSection}
+                        />
+                        <div className="text-[10px] text-slate-400 text-right px-1 pt-0.5 flex items-center justify-end gap-1">
+                          <span>{timeStr}</span>
+                          <MessageTicks act={act} isSelf={isSelf} />
+                        </div>
                       </div>
                     ) : (
                       /* REGULAR TEXT CHAT MESSAGE BUBBLE */
@@ -511,6 +674,14 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
         >
           <span>↓ {unreadNewMessages} new {unreadNewMessages === 1 ? 'message' : 'messages'}</span>
         </button>
+      )}
+
+      {/* Lightbox Image Preview Modal */}
+      {previewPhoto && (
+        <ImagePreviewModal
+          photo={previewPhoto}
+          onClose={() => setPreviewPhoto(null)}
+        />
       )}
 
       <div ref={chatBottomRef} />

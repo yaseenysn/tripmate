@@ -9,12 +9,14 @@ interface WhatsAppComposerProps {
   onSelectAction: (
     actionType: 'PHOTO' | 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
   ) => void;
+  onUploadPhoto?: (file: File) => void;
   isClosed?: boolean;
 }
 
 export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
   onSendMessage,
   onSelectAction,
+  onUploadPhoto,
   isClosed = false,
 }) => {
   if (isClosed) {
@@ -29,6 +31,7 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const toggleButtonRef = useRef<HTMLButtonElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   // Close popup menu when clicking outside or pressing Escape
   useEffect(() => {
@@ -73,7 +76,21 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
     type: 'PHOTO' | 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
   ) => {
     setShowAttachmentMenu(false);
+    if (type === 'PHOTO' && onUploadPhoto) {
+      photoInputRef.current?.click();
+      return;
+    }
     onSelectAction(type);
+  };
+
+  const handlePhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && onUploadPhoto) {
+      onUploadPhoto(file);
+    }
+    if (e.target) {
+      e.target.value = '';
+    }
   };
 
   const actionItems = [
@@ -223,6 +240,15 @@ export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
             <Mic className="w-5 h-5" />
           </button>
         )}
+
+        {/* Hidden file input for direct photo upload */}
+        <input
+          type="file"
+          ref={photoInputRef}
+          accept="image/*"
+          className="hidden"
+          onChange={handlePhotoFileChange}
+        />
       </form>
     </div>
   );

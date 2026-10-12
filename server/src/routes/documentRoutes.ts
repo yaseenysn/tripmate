@@ -42,7 +42,13 @@ router.post('/:id/documents', authenticateToken, requireTripMembership, requireN
 
     const populated = await DocumentModel.findById(doc._id).populate('uploadedBy', 'name avatar');
 
-    await logActivity(tripId, userId, 'DOCUMENT_UPLOADED', `uploaded document "${name}"`);
+    const isImage = type === 'PHOTO' || /\.(jpe?g|png|webp|gif|svg)$/i.test(name) || /\/image\/upload\//.test(fileUrl);
+    const actType = isImage ? 'PHOTO_UPLOADED' : 'DOCUMENT_UPLOADED';
+    const label = isImage ? 'photo' : 'document';
+    await logActivity(tripId, userId, actType, `uploaded ${label} "${name}"`, {
+      documentId: doc._id,
+      document: populated
+    });
     emitToTrip(tripId, 'document.created', populated);
 
     res.status(201).json({ document: populated });

@@ -40,7 +40,8 @@ import {
   apiGetDocuments, apiGetActivity, apiGetNotifications,
   apiSendChatMessage, apiMarkActivitiesRead,
   setAuthToken, removeAuthToken, getAuthToken,
-  apiJoinWithToken, apiDeleteExpense, apiDeleteTrip
+  apiJoinWithToken, apiDeleteExpense, apiDeleteTrip,
+  apiVotePoll, apiUpdateTask, apiUploadFile, apiCreateDocument
 } from './services/api';
 import { joinTripRoom, leaveTripRoom, getSocket } from './services/socket';
 import {
@@ -744,6 +745,45 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleVotePoll = async (pollId: string, optionId: string) => {
+    if (!activeTripId) return;
+    try {
+      await apiVotePoll(activeTripId, pollId, optionId);
+      await loadWorkspaceData(activeTripId);
+    } catch (err: any) {
+      console.error('Failed to vote on poll:', err);
+    }
+  };
+
+  const handleToggleTaskStatus = async (taskId: string, currentStatus: string) => {
+    if (!activeTripId) return;
+    try {
+      const nextStatus = currentStatus === 'DONE' ? 'TODO' : 'DONE';
+      await apiUpdateTask(activeTripId, taskId, { status: nextStatus });
+      await loadWorkspaceData(activeTripId);
+    } catch (err: any) {
+      console.error('Failed to update task status:', err);
+    }
+  };
+
+  const handleUploadPhoto = async (file: File) => {
+    if (!activeTripId) return;
+    try {
+      const uploaded = await apiUploadFile(file, 'chat');
+      if (uploaded?.secureUrl || uploaded?.url) {
+        await apiCreateDocument(activeTripId, {
+          name: uploaded.originalName || file.name,
+          type: 'PHOTO',
+          fileUrl: uploaded.secureUrl || uploaded.url,
+          fileSize: uploaded.bytes ? `${Math.round(uploaded.bytes / 1024)} KB` : `${Math.round(file.size / 1024)} KB`
+        });
+        await loadWorkspaceData(activeTripId);
+      }
+    } catch (err) {
+      console.error('Failed to upload photo:', err);
+    }
+  };
+
   const handleDeleteExpense = async (id: string) => {
     if (!activeTripId || !id) return;
     const expIdStr = String(id);
@@ -995,8 +1035,8 @@ export const App: React.FC = () => {
                         onPayExpenseSplit={(exp, userShare, payerName) => {
                           setPaySplitInfo({ expense: exp, userShare, payerName });
                         }}
-                        onVotePoll={() => loadWorkspaceData(activeTripId)}
-                        onToggleTaskStatus={() => loadWorkspaceData(activeTripId)}
+                        onVotePoll={handleVotePoll}
+                        onToggleTaskStatus={handleToggleTaskStatus}
                         onNavigateSection={(sec) => setActiveSection(sec)}
                       />
                       {/* WhatsApp Chat Composer fixed at bottom of chat */}
@@ -1004,6 +1044,7 @@ export const App: React.FC = () => {
                         key={`composer-${activeTripId}`}
                         onSendMessage={handleSendMessage}
                         onSelectAction={handleSelectQuickAction}
+                        onUploadPhoto={handleUploadPhoto}
                         isClosed={tripData?.status === 'CLOSED'}
                       />
                     </div>

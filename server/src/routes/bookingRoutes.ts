@@ -47,7 +47,13 @@ router.post('/:id/bookings', authenticateToken, requireTripMembership, requireNo
 
     const populated = await Booking.findById(booking._id).populate('createdBy', 'name avatar');
 
-    await logActivity(tripId, userId, 'BOOKING_ADDED', `added ${type} booking with ${provider}`);
+    await logActivity(
+      tripId,
+      userId,
+      'BOOKING_ADDED',
+      `added ${type} booking with ${provider}`,
+      { bookingId: booking._id, booking: populated }
+    );
     emitToTrip(tripId, 'booking.created', populated);
 
     res.status(201).json({ booking: populated });

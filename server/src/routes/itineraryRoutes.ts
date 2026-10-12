@@ -48,7 +48,13 @@ router.post('/:id/itinerary', authenticateToken, requireTripMembership, requireN
 
     const populated = await ItineraryItem.findById(item._id).populate('assignedMembers', 'name avatar email');
 
-    await logActivity(tripId, userId, 'ITINERARY_ADDED', `added Day ${item.dayNumber} itinerary item "${title}"`);
+    await logActivity(
+      tripId,
+      userId,
+      'ITINERARY_ADDED',
+      `added Day ${item.dayNumber} itinerary item "${title}"`,
+      { itineraryId: item._id, itinerary: populated }
+    );
     emitToTrip(tripId, 'itinerary.created', populated);
 
     res.status(201).json({ item: populated });
