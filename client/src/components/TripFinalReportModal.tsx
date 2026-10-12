@@ -45,6 +45,7 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
   });
 
   const [recordingSettlement, setRecordingSettlement] = useState<any>(null);
+  const [expandedMembers, setExpandedMembers] = useState<Record<string, boolean>>({});
 
   const fetchReport = async () => {
     if (!tripId) return;
@@ -397,12 +398,12 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                             </div>
 
                             <button
+                              type="button"
                               onClick={() =>
-                                setExplanationModal({
-                                  isOpen: true,
-                                  type: 'MEMBER',
-                                  data: mb
-                                })
+                                setExpandedMembers((prev) => ({
+                                  ...prev,
+                                  [mb.userId]: !prev[mb.userId]
+                                }))
                               }
                               className="px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 shadow-sm"
                             >
@@ -413,31 +414,33 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                         </div>
 
                         {/* Explicit Arithmetic Breakdown Box */}
-                        <div className="bg-[#1a2329] p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
-                          <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center justify-between">
-                            <span>Explicit Calculation Arithmetic</span>
-                            <span className="text-slate-500 font-mono">Paid - Actual Share + Settled Paid - Settled Recv = Final</span>
+                        {expandedMembers[mb.userId] && (
+                          <div className="bg-[#1a2329] p-3 rounded-xl border border-slate-800/80 text-[11px] space-y-1.5">
+                            <div className="text-[10px] text-slate-400 uppercase font-bold flex items-center justify-between">
+                              <span>Explicit Calculation Arithmetic</span>
+                              <span className="text-slate-500 font-mono">Paid - Actual Share + Settled Paid - Settled Recv = Final</span>
+                            </div>
+                            <div className="font-mono text-slate-300 text-[10.5px] overflow-x-auto whitespace-nowrap bg-[#111b21] p-2 rounded-lg border border-slate-800">
+                              {`Amount Paid (${formatCurr(mb.totalPaid)}) - Actual Share (${formatCurr(mb.totalShare)}) + Confirmed Paid (${formatCurr(mb.settlementsPaid)}) - Confirmed Recv (${formatCurr(mb.settlementsReceived)}) = Final Balance (${formatCurr(mb.netBalance)})`}
+                            </div>
+                            <p
+                              className={`font-semibold text-[11px] ${
+                                isPositive
+                                  ? 'text-emerald-400'
+                                  : isNegative
+                                  ? 'text-rose-400'
+                                  : 'text-slate-400'
+                              }`}
+                            >
+                              {mb.calculationDetails?.arithmetic?.summaryText ||
+                                (isPositive
+                                  ? `This member should receive ${formatCurr(mb.netBalance)}.`
+                                  : isNegative
+                                  ? `This member needs to pay ${formatCurr(Math.abs(mb.netBalance))}.`
+                                  : 'This member has settled all balances (Rs. 0.00).')}
+                            </p>
                           </div>
-                          <div className="font-mono text-slate-300 text-[10.5px] overflow-x-auto whitespace-nowrap bg-[#111b21] p-2 rounded-lg border border-slate-800">
-                            {`Amount Paid (${formatCurr(mb.totalPaid)}) - Actual Share (${formatCurr(mb.totalShare)}) + Confirmed Paid (${formatCurr(mb.settlementsPaid)}) - Confirmed Recv (${formatCurr(mb.settlementsReceived)}) = Final Balance (${formatCurr(mb.netBalance)})`}
-                          </div>
-                          <p
-                            className={`font-semibold text-[11px] ${
-                              isPositive
-                                ? 'text-emerald-400'
-                                : isNegative
-                                ? 'text-rose-400'
-                                : 'text-slate-400'
-                            }`}
-                          >
-                            {mb.calculationDetails?.arithmetic?.summaryText ||
-                              (isPositive
-                                ? `This member should receive ${formatCurr(mb.netBalance)}.`
-                                : isNegative
-                                ? `This member needs to pay ${formatCurr(Math.abs(mb.netBalance))}.`
-                                : 'This member has settled all balances (Rs. 0.00).')}
-                          </p>
-                        </div>
+                        )}
                       </div>
                     );
                   })}
