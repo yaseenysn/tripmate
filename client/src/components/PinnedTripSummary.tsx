@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Wallet, ChevronDown, ChevronUp, Clock, CheckSquare, Users } from 'lucide-react';
+import { Wallet, ChevronDown, ChevronUp, Clock, CheckSquare, Users, FileText } from 'lucide-react';
 
 interface PinnedTripSummaryProps {
   trip: any;
@@ -9,6 +9,7 @@ interface PinnedTripSummaryProps {
   pendingTasksCount: number;
   onOpenTripInfo: () => void;
   onNavigateSection: (sec: string) => void;
+  onOpenTripReport?: () => void;
 }
 
 export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
@@ -19,6 +20,7 @@ export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
   pendingTasksCount,
   onOpenTripInfo,
   onNavigateSection,
+  onOpenTripReport,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -39,7 +41,16 @@ export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
             <span className="text-[10px] text-slate-400 font-medium">({percentage}%)</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {onOpenTripReport && (
+              <button
+                onClick={onOpenTripReport}
+                className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20"
+              >
+                <FileText className="w-3 h-3" />
+                <span>Summary</span>
+              </button>
+            )}
             <button
               onClick={onOpenTripInfo}
               className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 hover:underline"
@@ -67,13 +78,26 @@ export const PinnedTripSummary: React.FC<PinnedTripSummaryProps> = ({
               </span>
             </div>
 
-            <button
-              onClick={() => setIsCollapsed(true)}
-              className="p-1 text-slate-400 hover:text-white rounded"
-              title="Collapse Summary"
-            >
-              <ChevronUp className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              {onOpenTripReport && (
+                <button
+                  onClick={onOpenTripReport}
+                  className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 rounded-lg border border-emerald-500/20 transition-all"
+                  title="View Trip Summary & Final Report"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Trip Summary</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setIsCollapsed(true)}
+                className="p-1 text-slate-400 hover:text-white rounded"
+                title="Collapse Summary"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Budget & Key Metrics Bar */}

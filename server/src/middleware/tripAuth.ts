@@ -39,3 +39,31 @@ export const requireTripAdmin = async (req: TripAuthRequest, res: Response, next
   }
   next();
 };
+
+export const requireNotClosedTrip = async (req: TripAuthRequest, res: Response, next: NextFunction) => {
+  const tripId = req.params.tripId || req.params.id;
+  if (!tripId) return next();
+
+  try {
+    const { Trip } = await import('../models');
+    const trip = await Trip.findById(tripId);
+    if (!trip) {
+      return res.status(404).json({ error: 'Trip not found' });
+    }
+
+    if (trip.status === 'CLOSED') {
+      // Allow authorized correction workflow if admin explicitly provides correctionReason
+      const isAdmin = req.tripMember?.role === 'ADMIN';
+      if (isAdmin && req.body?.isCorrection && req.body?.correctionReason) {
+        return next();
+      }
+      return res.status(403).json({
+        error: 'This trip is CLOSED and read-only. Ordinary modifications are not permitted.'
+      });
+    }
+    next();
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error checking trip state' });
+  }
+};
+

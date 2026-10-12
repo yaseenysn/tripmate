@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Share2, MoreVertical, Search, UserPlus } from 'lucide-react';
+import { ArrowLeft, Share2, MoreVertical, Search, UserPlus, FileText } from 'lucide-react';
 
 interface TripWorkspaceHeaderProps {
   trip: any;
@@ -9,6 +9,7 @@ interface TripWorkspaceHeaderProps {
   onOpenInvite: () => void;
   onOpenTripInfo: () => void;
   onSearchClick?: () => void;
+  onOpenTripReport?: () => void;
 }
 
 export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
@@ -19,6 +20,7 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
   onOpenInvite,
   onOpenTripInfo,
   onSearchClick,
+  onOpenTripReport,
 }) => {
   const getDestinationEmoji = (dest: string) => {
     const d = (dest || '').toLowerCase();
@@ -99,6 +101,17 @@ export const TripWorkspaceHeader: React.FC<TripWorkspaceHeaderProps> = ({
           <UserPlus className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Invite</span>
         </button>
+
+        {onOpenTripReport && (
+          <button
+            onClick={onOpenTripReport}
+            className="p-1.5 text-slate-300 hover:text-emerald-300 hover:bg-slate-800/80 rounded-full transition-colors flex items-center gap-1 text-xs"
+            title="Trip Summary & Final Report"
+          >
+            <FileText className="w-4 h-4 text-emerald-400" />
+            <span className="hidden md:inline text-xs font-semibold text-slate-300">Summary</span>
+          </button>
+        )}
 
         <button
           onClick={onOpenTripInfo}

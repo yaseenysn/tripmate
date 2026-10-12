@@ -75,7 +75,10 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
   if (!finalContentType.includes('application/json')) {
     const snippet = (await res.text()).substring(0, 200);
     console.error(`[API Error] Received non-JSON response from ${res.url} (Status: ${res.status}):`, snippet);
-    throw new Error(`API request to ${cleanEndpoint} returned HTML instead of JSON (${res.status}). Please check VITE_API_URL environment variable.`);
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(`The backend server is starting up or waking up (HTTP ${res.status} Bad Gateway). Please wait a few seconds and try again.`);
+    }
+    throw new Error(`API request to ${cleanEndpoint} returned HTML instead of JSON (${res.status}). Please check that the backend server is running and VITE_API_URL is configured.`);
   }
 
   const data = await res.json();
@@ -104,6 +107,14 @@ export const apiUpdateTrip = (tripId: string, updates: any) =>
   request(`/trips/${tripId}`, { method: 'PATCH', body: JSON.stringify(updates) });
 export const apiDeleteTrip = (tripId: string) =>
   request(`/trips/${tripId}`, { method: 'DELETE' });
+export const apiGetTripFinishPreview = (tripId: string) =>
+  request(`/trips/${tripId}/finish-preview`);
+export const apiFinishTrip = (tripId: string) =>
+  request(`/trips/${tripId}/finish`, { method: 'POST' });
+export const apiCloseTrip = (tripId: string) =>
+  request(`/trips/${tripId}/close`, { method: 'POST' });
+export const apiGetTripReport = (tripId: string) =>
+  request(`/trips/${tripId}/report`);
 
 // Invites
 export const apiSendEmailInvite = (tripId: string, email: string, message?: string) =>

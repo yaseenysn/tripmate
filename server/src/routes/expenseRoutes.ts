@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
 import mongoose from 'mongoose';
-import { Expense, TripMember, Budget, Trip, Activity } from '../models';
+import { Expense, TripMember, Budget, Trip, Activity, Settlement } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
+import { calculateTripBalancesAndSettlements } from '../services/settlementService';
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { emitToTrip } from '../sockets/socketHandler';
@@ -79,7 +80,7 @@ router.get('/:id/expenses', authenticateToken, requireTripMembership, async (req
 });
 
 // POST /api/trips/:id/expenses
-router.post('/:id/expenses', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/expenses', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
@@ -167,7 +168,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, async (re
 });
 
 // PATCH /api/trips/:id/expenses/:expenseId
-router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, expenseId } = req.params;
     const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl, receiptPublicId } = req.body;
@@ -245,7 +246,7 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
 });
 
 // POST /api/trips/:id/expenses/:expenseId/pay-split
-router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, expenseId } = req.params;
     const currentUserId = req.user!.userId;
@@ -279,6 +280,28 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
       .populate('paidBy', 'name avatar email')
       .populate('participants.userId', 'name avatar email');
 
+    // Record or update confirmed Settlement record for this expense split payment
+    const payerIdStr = expense.paidBy.toString();
+    const targetIdStr = targetUserId.toString();
+    const splitKey = `split_${expense._id}_${targetIdStr}`;
+
+    if (payerIdStr !== targetIdStr && participant.share > 0) {
+      await Settlement.findOneAndUpdate(
+        { tripId, idempotencyKey: splitKey },
+        {
+          tripId,
+          fromUser: targetUserId,
+          toUser: expense.paidBy,
+          amount: participant.share,
+          status: 'PAID',
+          paidAt: new Date(),
+          notes: `Split payment for "${expense.title}"`,
+          idempotencyKey: splitKey
+        },
+        { upsert: true, new: true }
+      );
+    }
+
     // Update existing activity record for this expense in place so metadata.expense is fresh
     await Activity.updateMany(
       {
@@ -295,19 +318,30 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
       }
     );
 
-    // Emit real-time updates to all connected trip members
-    // This updates the existing expense card in place without creating a duplicate card
-    emitToTrip(tripId, 'expense.updated', populated);
-    emitToTrip(tripId, 'settlement.updated', { tripId });
+    // Recalculate trip balances and status
+    const freshCalculation = await calculateTripBalancesAndSettlements(tripId);
+    const trip = await Trip.findById(tripId);
+    if (trip) {
+      trip.settlementStatus = freshCalculation.settlementStatus;
+      if (freshCalculation.settlementStatus === 'SETTLED' && trip.status === 'COMPLETED') {
+        trip.status = 'SETTLED';
+      }
+      await trip.save();
+      emitToTrip(tripId, 'trip.updated', trip);
+    }
 
-    res.json({ expense: populated });
+    // Emit real-time updates to all connected trip members
+    emitToTrip(tripId, 'expense.updated', populated);
+    emitToTrip(tripId, 'settlement.updated', { tripId, calculation: freshCalculation });
+
+    res.json({ expense: populated, calculation: freshCalculation });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Error marking split paid' });
   }
 });
 
 // DELETE /api/trips/:id/expenses/:expenseId
-router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, expenseId } = req.params;
 
@@ -335,8 +369,17 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
     const title = expense.title;
     await Expense.findByIdAndDelete(expenseId);
 
+    // Also remove any settlement records linked to this expense's splits
+    await Settlement.deleteMany({
+      tripId,
+      idempotencyKey: { $regex: `^split_${expenseId}_` }
+    });
+
     await logActivity(tripId, req.user!.userId, 'EXPENSE_DELETED', `deleted expense "${title}"`);
     emitToTrip(tripId, 'expense.deleted', { expenseId });
+
+    const freshCalculation = await calculateTripBalancesAndSettlements(tripId);
+    emitToTrip(tripId, 'settlement.updated', { tripId, calculation: freshCalculation });
 
     res.json({ message: 'Expense deleted successfully' });
   } catch (error: any) {

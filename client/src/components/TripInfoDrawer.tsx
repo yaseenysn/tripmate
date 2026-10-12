@@ -2,7 +2,7 @@ import React from 'react';
 import {
   X, Calendar, MapPin, Users, Share2, Wallet, Ticket, FileText,
   CheckSquare, Vote, Activity, Settings, Trash2, ChevronRight, Image as ImageIcon,
-  DollarSign
+  DollarSign, CheckCircle2, Lock, Clock, ShieldCheck
 } from 'lucide-react';
 
 interface TripInfoDrawerProps {
@@ -16,6 +16,8 @@ interface TripInfoDrawerProps {
   onOpenInvite: () => void;
   onNavigateCategory: (cat: string) => void;
   onDeleteTrip?: () => void;
+  onOpenTripReport: () => void;
+  onOpenFinishConfirmation?: () => void;
 }
 
 export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
@@ -29,6 +31,8 @@ export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
   onOpenInvite,
   onNavigateCategory,
   onDeleteTrip,
+  onOpenTripReport,
+  onOpenFinishConfirmation,
 }) => {
   if (!isOpen || !trip) return null;
 
@@ -37,6 +41,10 @@ export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
   const remaining = totalBudget - totalSpent;
   const startDateStr = new Date(trip.startDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
   const endDateStr = new Date(trip.endDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+  const isClosed = trip.status === 'CLOSED';
+  const isSettled = trip.status === 'SETTLED' || trip.settlementStatus === 'SETTLED';
+  const isCompleted = trip.status === 'COMPLETED' || isSettled || isClosed;
 
   const featureSections = [
     { cat: 'documents', label: 'Media, Links & Documents', icon: ImageIcon, color: 'text-cyan-400' },
@@ -72,6 +80,21 @@ export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
           />
           <div className="absolute inset-0 bg-gradient-to-t from-[#111b21] via-transparent to-transparent" />
           <div className="absolute bottom-4 left-4 right-4 text-white">
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                  isClosed
+                    ? 'bg-slate-800/90 text-slate-300 border-slate-600'
+                    : isSettled
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : isCompleted
+                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                }`}
+              >
+                {trip.status || 'ACTIVE'}
+              </span>
+            </div>
             <h2 className="text-2xl font-extrabold text-white">{trip.name}</h2>
             <p className="text-xs text-slate-300 flex items-center gap-2 mt-1">
               <MapPin className="w-3.5 h-3.5 text-emerald-400" />
@@ -84,6 +107,28 @@ export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
         </div>
 
         <div className="p-4 space-y-5 flex-1">
+          {/* Trip Summary & Settlement Report Action Button */}
+          <button
+            onClick={() => {
+              onOpenTripReport();
+              onClose();
+            }}
+            className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white flex items-center justify-between shadow-lg shadow-emerald-600/20 transition-all group"
+          >
+            <div className="flex items-center gap-3 text-left">
+              <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                <FileText className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <span className="text-xs font-extrabold block">Trip Summary & Final Report</span>
+                <span className="text-[10px] text-emerald-100">
+                  View full financial summary, balances & download PDF
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-emerald-100 group-hover:translate-x-0.5 transition-transform" />
+          </button>
+
           {/* Budget KPI Card */}
           <div className="bg-[#1f2c34] p-4 rounded-2xl border border-slate-700/60 space-y-2">
             <span className="text-xs font-bold text-slate-300 uppercase tracking-wider block">Trip Budget</span>
@@ -110,13 +155,15 @@ export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
               <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
                 {members.length} Members
               </span>
-              <button
-                onClick={onOpenInvite}
-                className="text-xs text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1"
-              >
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Invite</span>
-              </button>
+              {!isClosed && (
+                <button
+                  onClick={onOpenInvite}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Invite</span>
+                </button>
+              )}
             </div>
 
             <div className="space-y-2.5 max-h-48 overflow-y-auto">
@@ -171,20 +218,54 @@ export const TripInfoDrawer: React.FC<TripInfoDrawerProps> = ({
               );
             })}
 
-            <button
-              onClick={onOpenInvite}
-              className="w-full flex items-center justify-between py-3 px-1 text-xs text-emerald-400 hover:text-emerald-300 transition-colors text-left font-bold"
-            >
-              <div className="flex items-center gap-3">
-                <Share2 className="w-4 h-4 text-emerald-400" />
-                <span>Invite Members</span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500" />
-            </button>
+            {!isClosed && (
+              <button
+                onClick={onOpenInvite}
+                className="w-full flex items-center justify-between py-3 px-1 text-xs text-emerald-400 hover:text-emerald-300 transition-colors text-left font-bold"
+              >
+                <div className="flex items-center gap-3">
+                  <Share2 className="w-4 h-4 text-emerald-400" />
+                  <span>Invite Members</span>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-500" />
+              </button>
+            )}
           </div>
 
+          {/* Admin Trip Lifecycle Action */}
+          {isAdmin && !isClosed && (
+            <div className="p-3 bg-[#1f2c34] rounded-2xl border border-slate-700/60 space-y-2">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                Trip Lifecycle
+              </span>
+              {!isCompleted ? (
+                <button
+                  onClick={() => {
+                    onClose();
+                    if (onOpenFinishConfirmation) onOpenFinishConfirmation();
+                  }}
+                  className="w-full py-2.5 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-bold rounded-xl border border-indigo-500/30 flex items-center justify-center gap-2 transition-all"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-indigo-400" />
+                  <span>Finish Trip</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenTripReport();
+                  }}
+                  className="w-full py-2.5 px-3 bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 text-xs font-bold rounded-xl border border-teal-500/30 flex items-center justify-center gap-2 transition-all"
+                >
+                  <ShieldCheck className="w-4 h-4 text-teal-400" />
+                  <span>Review Final Report & Settle</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Delete / Danger Zone */}
-          {isAdmin && onDeleteTrip && (
+          {isAdmin && !isClosed && onDeleteTrip && (
             <div className="pt-2">
               <button
                 onClick={() => {

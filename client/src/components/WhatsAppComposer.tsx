@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus, Send, Mic, Camera, DollarSign, Calendar,
-  Ticket, CheckSquare, Vote, FileText, X
+  Ticket, CheckSquare, Vote, FileText, X, Lock
 } from 'lucide-react';
 
 interface WhatsAppComposerProps {
@@ -9,12 +9,22 @@ interface WhatsAppComposerProps {
   onSelectAction: (
     actionType: 'PHOTO' | 'EXPENSE' | 'ITINERARY' | 'BOOKING' | 'TASK' | 'POLL' | 'DOCUMENT'
   ) => void;
+  isClosed?: boolean;
 }
 
 export const WhatsAppComposer: React.FC<WhatsAppComposerProps> = ({
   onSendMessage,
   onSelectAction,
+  isClosed = false,
 }) => {
+  if (isClosed) {
+    return (
+      <div className="bg-[#202c33] border-t border-slate-800 px-4 py-3.5 flex items-center justify-center gap-2 text-xs font-medium text-slate-400 select-none">
+        <Lock className="w-4 h-4 text-slate-500 flex-shrink-0" />
+        <span>This trip is officially closed and archived. Chat history and records are preserved as read-only.</span>
+      </div>
+    );
+  }
   const [messageText, setMessageText] = useState('');
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);

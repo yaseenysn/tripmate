@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { Poll, PollVote } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
 
@@ -58,7 +58,7 @@ router.get('/:id/polls', authenticateToken, requireTripMembership, async (req: T
 });
 
 // POST /api/trips/:id/polls
-router.post('/:id/polls', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/polls', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
@@ -88,7 +88,7 @@ router.post('/:id/polls', authenticateToken, requireTripMembership, async (req: 
 });
 
 // POST /api/trips/:id/polls/:pollId/vote
-router.post('/:id/polls/:pollId/vote', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/polls/:pollId/vote', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, pollId } = req.params;
     const userId = req.user!.userId;

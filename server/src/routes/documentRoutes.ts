@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { DocumentModel } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
 import { deleteFromCloudinary } from '../config/cloudinary';
@@ -20,7 +20,7 @@ router.get('/:id/documents', authenticateToken, requireTripMembership, async (re
 });
 
 // POST /api/trips/:id/documents
-router.post('/:id/documents', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/documents', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
@@ -52,7 +52,7 @@ router.post('/:id/documents', authenticateToken, requireTripMembership, async (r
 });
 
 // DELETE /api/trips/:id/documents/:documentId
-router.delete('/:id/documents/:documentId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.delete('/:id/documents/:documentId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, documentId } = req.params;
     const doc = await DocumentModel.findById(documentId);

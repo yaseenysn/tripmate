@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { ItineraryItem } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
 
@@ -22,7 +22,7 @@ router.get('/:id/itinerary', authenticateToken, requireTripMembership, async (re
 });
 
 // POST /api/trips/:id/itinerary
-router.post('/:id/itinerary', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/itinerary', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
@@ -58,7 +58,7 @@ router.post('/:id/itinerary', authenticateToken, requireTripMembership, async (r
 });
 
 // PATCH /api/trips/:id/itinerary/:itemId
-router.patch('/:id/itinerary/:itemId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.patch('/:id/itinerary/:itemId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, itemId } = req.params;
 
@@ -87,7 +87,7 @@ router.patch('/:id/itinerary/:itemId', authenticateToken, requireTripMembership,
 });
 
 // DELETE /api/trips/:id/itinerary/:itemId
-router.delete('/:id/itinerary/:itemId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.delete('/:id/itinerary/:itemId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, itemId } = req.params;
 

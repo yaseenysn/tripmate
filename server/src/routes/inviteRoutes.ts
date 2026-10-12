@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { Trip, TripInvite, TripMember, User } from '../models';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
-import { requireTripMembership, requireTripAdmin, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireTripAdmin, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { sendInviteEmail } from '../services/emailService';
@@ -53,7 +53,7 @@ export const getFrontendBaseUrl = (req?: Request): string => {
 };
 
 // Send Email Invitation to a user
-router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { tripId } = req.params;
     const { email, message } = req.body;
@@ -135,7 +135,7 @@ router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMember
 });
 
 // Create general invite link for trip (Admin only)
-router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
+router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, requireTripAdmin, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { tripId } = req.params;
     const { expiresAt, maxUses } = req.body;
@@ -204,7 +204,7 @@ router.get('/trips/:tripId/invites', authenticateToken, requireTripMembership, a
 });
 
 // Revoke invite (Admin only)
-router.post('/trips/:tripId/invites/:inviteId/revoke', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
+router.post('/trips/:tripId/invites/:inviteId/revoke', authenticateToken, requireTripMembership, requireTripAdmin, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { inviteId } = req.params;
     const invite = await TripInvite.findById(inviteId);
@@ -298,6 +298,10 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
       return res.status(404).json({ error: 'Trip not found' });
     }
 
+    if (trip.status === 'CLOSED') {
+      return res.status(403).json({ error: 'This trip is CLOSED and read-only. Joining is not permitted.' });
+    }
+
     // Check if user is already a member
     const existingMember = await TripMember.findOne({ tripId: trip._id, userId });
     if (existingMember) {
@@ -357,6 +361,10 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
     const trip = await Trip.findById(invite.tripId);
     if (!trip) {
       return res.status(404).json({ error: 'Trip not found' });
+    }
+
+    if (trip.status === 'CLOSED') {
+      return res.status(403).json({ error: 'This trip is CLOSED and read-only. Joining is not permitted.' });
     }
 
     const existingMember = await TripMember.findOne({ tripId: trip._id, userId });

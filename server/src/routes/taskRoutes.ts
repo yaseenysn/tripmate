@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { Task, User } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { emitToTrip } from '../sockets/socketHandler';
@@ -24,7 +24,7 @@ router.get('/:id/tasks', authenticateToken, requireTripMembership, async (req: T
 });
 
 // POST /api/trips/:id/tasks
-router.post('/:id/tasks', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/tasks', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
@@ -64,7 +64,7 @@ router.post('/:id/tasks', authenticateToken, requireTripMembership, async (req: 
 });
 
 // PATCH /api/trips/:id/tasks/:taskId
-router.patch('/:id/tasks/:taskId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.patch('/:id/tasks/:taskId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, taskId } = req.params;
     const task = await Task.findById(taskId);
@@ -101,7 +101,7 @@ router.patch('/:id/tasks/:taskId', authenticateToken, requireTripMembership, asy
 });
 
 // DELETE /api/trips/:id/tasks/:taskId
-router.delete('/:id/tasks/:taskId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.delete('/:id/tasks/:taskId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, taskId } = req.params;
     const task = await Task.findById(taskId);

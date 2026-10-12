@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { Budget, Expense } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { emitToTrip } from '../sockets/socketHandler';
 
 const router = Router();
@@ -74,7 +74,7 @@ router.get('/:id/budget', authenticateToken, requireTripMembership, async (req: 
 });
 
 // PATCH /api/trips/:id/budget
-router.patch('/:id/budget', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.patch('/:id/budget', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const { totalBudget, categoryBudgets } = req.body;

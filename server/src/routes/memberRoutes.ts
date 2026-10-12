@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { TripMember, User } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, requireTripAdmin, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireTripAdmin, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { calculateTripBalancesAndSettlements } from '../services/settlementService';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
@@ -52,7 +52,7 @@ router.get('/:id/members', authenticateToken, requireTripMembership, async (req:
 });
 
 // DELETE /api/trips/:id/members/:memberId - Remove member from trip (Admin only)
-router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
+router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership, requireTripAdmin, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, memberId } = req.params;
 
@@ -78,7 +78,7 @@ router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership
 });
 
 // PATCH /api/trips/:id/members/:memberId/role - Change member role (Admin only)
-router.patch('/:id/members/:memberId/role', authenticateToken, requireTripMembership, requireTripAdmin, async (req: TripAuthRequest, res: Response) => {
+router.patch('/:id/members/:memberId/role', authenticateToken, requireTripMembership, requireTripAdmin, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, memberId } = req.params;
     const { role } = req.body;

@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { Booking } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
 import { deleteFromCloudinary } from '../config/cloudinary';
@@ -20,7 +20,7 @@ router.get('/:id/bookings', authenticateToken, requireTripMembership, async (req
 });
 
 // POST /api/trips/:id/bookings
-router.post('/:id/bookings', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/bookings', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
@@ -57,7 +57,7 @@ router.post('/:id/bookings', authenticateToken, requireTripMembership, async (re
 });
 
 // PATCH /api/trips/:id/bookings/:bookingId
-router.patch('/:id/bookings/:bookingId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.patch('/:id/bookings/:bookingId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, bookingId } = req.params;
     const booking = await Booking.findById(bookingId);
@@ -93,7 +93,7 @@ router.patch('/:id/bookings/:bookingId', authenticateToken, requireTripMembershi
 });
 
 // DELETE /api/trips/:id/bookings/:bookingId
-router.delete('/:id/bookings/:bookingId', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.delete('/:id/bookings/:bookingId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, bookingId } = req.params;
     const booking = await Booking.findById(bookingId);

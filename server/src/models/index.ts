@@ -33,7 +33,12 @@ export interface ITrip extends Document {
   estimatedBudget: number;
   description: string;
   createdBy: mongoose.Types.ObjectId;
-  status: 'UPCOMING' | 'ACTIVE' | 'COMPLETED';
+  status: 'UPCOMING' | 'ACTIVE' | 'COMPLETED' | 'SETTLED' | 'CLOSED';
+  settlementStatus: 'PENDING' | 'SETTLED';
+  completedAt?: Date;
+  completedBy?: mongoose.Types.ObjectId;
+  closedAt?: Date;
+  closedBy?: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,7 +54,12 @@ const TripSchema = new Schema<ITrip>({
   estimatedBudget: { type: Number, default: 0 },
   description: { type: String, default: '' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  status: { type: String, enum: ['UPCOMING', 'ACTIVE', 'COMPLETED'], default: 'UPCOMING' },
+  status: { type: String, enum: ['UPCOMING', 'ACTIVE', 'COMPLETED', 'SETTLED', 'CLOSED'], default: 'ACTIVE' },
+  settlementStatus: { type: String, enum: ['PENDING', 'SETTLED'], default: 'PENDING' },
+  completedAt: { type: Date },
+  completedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  closedAt: { type: Date },
+  closedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 export const Trip = mongoose.model<ITrip>('Trip', TripSchema);
@@ -183,6 +193,10 @@ export interface ISettlement extends Document {
   amount: number;
   status: 'PENDING' | 'PAID';
   paidAt?: Date;
+  idempotencyKey?: string;
+  notes?: string;
+  reference?: string;
+  createdAt: Date;
   updatedAt: Date;
 }
 
@@ -192,7 +206,10 @@ const SettlementSchema = new Schema<ISettlement>({
   toUser: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   amount: { type: Number, required: true },
   status: { type: String, enum: ['PENDING', 'PAID'], default: 'PENDING' },
-  paidAt: { type: Date }
+  paidAt: { type: Date },
+  idempotencyKey: { type: String, sparse: true },
+  notes: { type: String, default: '' },
+  reference: { type: String, default: '' }
 }, { timestamps: true });
 
 export const Settlement = mongoose.model<ISettlement>('Settlement', SettlementSchema);

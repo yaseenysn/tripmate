@@ -11,6 +11,8 @@ import { SettlementSheet } from './components/SettlementSheet';
 import { NotificationsModal } from './components/NotificationsModal';
 import { AddEditExpenseModal } from './components/AddEditExpenseModal';
 import { PaySplitConfirmationModal } from './components/PaySplitConfirmationModal';
+import { FinishTripConfirmationModal } from './components/FinishTripConfirmationModal';
+import { TripFinalReportModal } from './components/TripFinalReportModal';
 
 // Auth & Shell
 import { AuthView } from './components/AuthView';
@@ -83,6 +85,8 @@ export const App: React.FC = () => {
   const [showAddEditExpenseModal, setShowAddEditExpenseModal] = useState(false);
   const [paySplitInfo, setPaySplitInfo] = useState<{ expense: any; userShare: number; payerName: string } | null>(null);
   const [autoOpenModalCategory, setAutoOpenModalCategory] = useState<string | null>(null);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [showFinishModal, setShowFinishModal] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Synchronize ref on activeTripId change
@@ -516,6 +520,27 @@ export const App: React.FC = () => {
         handleWorkspaceSync();
       };
 
+      const handleTripUpdated = (updatedTrip: any) => {
+        if (updatedTrip && String(updatedTrip._id) === activeTripIdRef.current) {
+          setTripData((prev: any) => ({ ...prev, ...updatedTrip }));
+          setTrips((prev: any[]) =>
+            prev.map((t) => (String(t._id) === String(updatedTrip._id) ? { ...t, ...updatedTrip } : t))
+          );
+        }
+      };
+
+      const handleTripLifecycle = (payload: any) => {
+        if (payload && String(payload.tripId) === activeTripIdRef.current) {
+          if (payload.trip) {
+            setTripData((prev: any) => ({ ...prev, ...payload.trip }));
+            setTrips((prev: any[]) =>
+              prev.map((t) => (String(t._id) === String(payload.tripId) ? { ...t, ...payload.trip } : t))
+            );
+          }
+          handleWorkspaceSync();
+        }
+      };
+
       socket.on('activity.created', handleActivityCreated);
       socket.on('expense.created', handleWorkspaceSync);
       socket.on('expense.updated', handleExpenseUpdated);
@@ -528,6 +553,8 @@ export const App: React.FC = () => {
       socket.on('task.updated', handleWorkspaceSync);
       socket.on('poll.voted', handleWorkspaceSync);
       socket.on('settlement.updated', handleWorkspaceSync);
+      socket.on('trip.updated', handleTripUpdated);
+      socket.on('trip.lifecycle', handleTripLifecycle);
 
       return () => {
         leaveTripRoom(activeTripId);
@@ -543,6 +570,8 @@ export const App: React.FC = () => {
         socket.off('task.updated', handleWorkspaceSync);
         socket.off('poll.voted', handleWorkspaceSync);
         socket.off('settlement.updated', handleWorkspaceSync);
+        socket.off('trip.updated', handleTripUpdated);
+        socket.off('trip.lifecycle', handleTripLifecycle);
       };
     }
   }, [activeTripId]);
@@ -785,6 +814,19 @@ export const App: React.FC = () => {
                   }}
                   onOpenInvite={() => setShowInviteModal(true)}
                   onOpenTripInfo={() => setShowTripInfo(true)}
+                  onOpenTripReport={() => setShowReportModal(true)}
+                />
+
+                {/* Pinned Trip Summary with quick access to Trip Summary Report */}
+                <PinnedTripSummary
+                  trip={tripData}
+                  budget={budgetData}
+                  members={members}
+                  nextItineraryItem={itinerary?.[0]}
+                  pendingTasksCount={tasks.filter((t: any) => t.status !== 'DONE').length}
+                  onOpenTripInfo={() => setShowTripInfo(true)}
+                  onNavigateSection={(sec) => setActiveSection(sec)}
+                  onOpenTripReport={() => setShowReportModal(true)}
                 />
 
                 {/* Navigation sub-header when inside a specific detail view (Expenses, Itinerary, etc.) */}
@@ -836,6 +878,7 @@ export const App: React.FC = () => {
                         key={`composer-${activeTripId}`}
                         onSendMessage={handleSendMessage}
                         onSelectAction={handleSelectQuickAction}
+                        isClosed={tripData?.status === 'CLOSED'}
                       />
                     </div>
                   )}
@@ -987,6 +1030,8 @@ export const App: React.FC = () => {
               setShowTripInfo(false);
             }}
             onDeleteTrip={handleDeleteTripGroup}
+            onOpenTripReport={() => setShowReportModal(true)}
+            onOpenFinishConfirmation={() => setShowFinishModal(true)}
           />
 
           <ExpenseDetailSheet
@@ -1051,6 +1096,32 @@ export const App: React.FC = () => {
               }}
             />
           )}
+
+          {/* Finish Trip Confirmation Modal */}
+          <FinishTripConfirmationModal
+            isOpen={showFinishModal}
+            onClose={() => setShowFinishModal(false)}
+            tripId={activeTripId}
+            onTripFinished={(updatedTrip) => {
+              setTripData((prev: any) => ({ ...prev, ...updatedTrip }));
+              loadWorkspaceData(activeTripId, true);
+              loadTrips();
+            }}
+          />
+
+          {/* Trip Summary and Final Report Modal */}
+          <TripFinalReportModal
+            isOpen={showReportModal}
+            onClose={() => setShowReportModal(false)}
+            tripId={activeTripId}
+            isAdmin={isAdmin}
+            onOpenFinishConfirmation={() => setShowFinishModal(true)}
+            onTripClosed={(updatedTrip) => {
+              setTripData((prev: any) => ({ ...prev, ...updatedTrip }));
+              loadWorkspaceData(activeTripId, true);
+              loadTrips();
+            }}
+          />
         </>
       )}
 
