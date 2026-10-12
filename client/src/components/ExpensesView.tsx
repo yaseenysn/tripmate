@@ -12,6 +12,7 @@ interface ExpensesViewProps {
   currentUser: any;
   openAddModal?: boolean;
   onRefresh: () => void;
+  onDeleteExpense?: (id: string) => Promise<void> | void;
 }
 
 const CATEGORIES = [
@@ -31,7 +32,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   members,
   currentUser,
   openAddModal = false,
-  onRefresh
+  onRefresh,
+  onDeleteExpense
 }) => {
   const [showAddModal, setShowAddModal] = useState(openAddModal);
   const [expenseToEdit, setExpenseToEdit] = useState<any>(null);
@@ -55,11 +57,15 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleDeleteExpense = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!confirm('Are you sure you want to delete this expense?')) return;
-    try {
-      await apiDeleteExpense(tripId, id);
-      onRefresh();
-    } catch (err) {
-      console.error(err);
+    if (onDeleteExpense) {
+      await onDeleteExpense(id);
+    } else {
+      try {
+        await apiDeleteExpense(tripId, id);
+        onRefresh();
+      } catch (err) {
+        console.error(err);
+      }
     }
   };
 

@@ -7,6 +7,7 @@ import {
 import { apiGetTripReport, apiCloseTrip } from '../services/api';
 import { generateTripReportPDF } from '../services/pdfReportGenerator';
 import { getTripReportCache, setTripReportCache, invalidateTripReportCache } from '../services/tripCache';
+import { getSocket } from '../services/socket';
 import { CalculationExplanationModal } from './CalculationExplanationModal';
 import { RecordSettlementModal } from './RecordSettlementModal';
 
@@ -87,9 +88,30 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) {
-      fetchReport();
-    }
+    if (!isOpen || !tripId) return;
+
+    fetchReport();
+
+    const socket = getSocket();
+    const handleLiveReportUpdate = (payload?: any) => {
+      const pTripId = String(payload?.tripId?._id || payload?.tripId || payload?._id || '');
+      if (!pTripId || pTripId === String(tripId)) {
+        console.log(`[TripReport] Live update triggered report re-fetch for ${tripId}`);
+        fetchReport(true);
+      }
+    };
+
+    socket.on('expense.deleted', handleLiveReportUpdate);
+    socket.on('expense.created', handleLiveReportUpdate);
+    socket.on('expense.updated', handleLiveReportUpdate);
+    socket.on('settlement.updated', handleLiveReportUpdate);
+
+    return () => {
+      socket.off('expense.deleted', handleLiveReportUpdate);
+      socket.off('expense.created', handleLiveReportUpdate);
+      socket.off('expense.updated', handleLiveReportUpdate);
+      socket.off('settlement.updated', handleLiveReportUpdate);
+    };
   }, [isOpen, tripId]);
 
   if (!isOpen) return null;

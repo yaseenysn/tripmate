@@ -131,6 +131,76 @@ export const invalidateTripReportCache = (tripId: string): void => {
 };
 
 /**
+ * Remove a deleted expense and its related activities from the trip's workspace cache,
+ * immediately update cached totalSpent, clear stale settlements cache,
+ * stale-mark the workspace cache to trigger revalidation on next check,
+ * and invalidate the authoritative trip report cache.
+ */
+export const removeExpenseFromTripCache = (tripId: string, expenseId: string): void => {
+  if (!tripId || !expenseId) return;
+  const expIdStr = String(expenseId);
+  const key = getWorkspaceKey(tripId);
+  const cached = cacheMap.get(key) as TripWorkspaceData | undefined;
+
+  if (cached) {
+    // 1. Remove expense from cached expenses
+    cached.expenses = (cached.expenses || []).filter((e: any) => String(e._id) !== expIdStr);
+
+    // 2. Remove related activities from cached activities
+    cached.activities = (cached.activities || []).filter((act: any) => {
+      const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+      return String(actExpId) !== expIdStr;
+    });
+
+    // 3. Recalculate trip totalSpent immediately from remaining cached expenses
+    const remainingTotalSpent = cached.expenses.reduce(
+      (sum: number, e: any) => sum + (Number(e.amount) || 0),
+      0
+    );
+
+    if (cached.trip) {
+      cached.trip = {
+        ...cached.trip,
+        totalSpent: remainingTotalSpent
+      };
+    }
+
+    // 4. Update budget totalSpent if present
+    if (cached.budget) {
+      cached.budget = {
+        ...cached.budget,
+        totalSpent: remainingTotalSpent,
+        spent: remainingTotalSpent
+      };
+    }
+
+    // 5. Invalidate cached settlements so old calculations aren't presented
+    cached.settlements = null;
+
+    // 6. Stale-mark the cache (cachedAt = 0) so background revalidation fetches fresh server data
+    cached.cachedAt = 0;
+    console.log(`[TripCache] Removed expense ${expenseId} and stale-marked workspace cache for ${tripId}`);
+  }
+
+  // 7. Invalidate the authoritative report cache for this trip
+  invalidateTripReportCache(tripId);
+};
+
+/**
+ * Invalidate workspace cache and report cache for a trip (forces fresh revalidation)
+ */
+export const invalidateTripWorkspaceCache = (tripId: string): void => {
+  if (!tripId) return;
+  const key = getWorkspaceKey(tripId);
+  const cached = cacheMap.get(key) as TripWorkspaceData | undefined;
+  if (cached) {
+    cached.cachedAt = 0;
+  }
+  invalidateTripReportCache(tripId);
+  console.log(`[TripCache] Stale-marked workspace and invalidated report cache for ${tripId}`);
+};
+
+/**
  * Remove all cached data for a deleted trip
  */
 export const deleteTripCache = (tripId: string) => {
@@ -147,3 +217,4 @@ export const clearTripCache = () => {
   cacheMap.clear();
   console.log(`[TripCache] Cleared all trip workspace and report cache entries on logout`);
 };
+

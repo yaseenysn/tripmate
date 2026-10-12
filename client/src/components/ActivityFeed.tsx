@@ -233,9 +233,13 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
               const timeStr = new Date(streamItem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
               const actType = act.type || '';
-              const isSystemMessage = actType.includes('JOIN') || actType.includes('LEAVE') || actType === 'TRIP_CREATED';
+              const isSystemMessage =
+                actType.includes('JOIN') ||
+                actType.includes('LEAVE') ||
+                actType === 'TRIP_CREATED' ||
+                actType === 'EXPENSE_DELETED';
 
-              // System Message Bubble (e.g. "Bilal joined the trip")
+              // System Message Bubble (e.g. "Bilal joined the trip" or "Yaseen deleted expense Dinner")
               if (isSystemMessage) {
                 return (
                   <div key={act._id || i} className="flex justify-center my-1.5">
@@ -247,15 +251,20 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 );
               }
 
-              // Check for related expense card
+              // Check for related expense card - MUST resolve against active expenses list
               const targetExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
               const relatedExpense = targetExpId
-                ? (expenses.find((e) => String(e._id) === String(targetExpId)) || act.metadata?.expense)
-                : (actType === 'EXPENSE_ADDED' || actType === 'EXPENSE_UPDATED' ? act.metadata?.expense : null);
+                ? expenses.find((e) => String(e._id) === String(targetExpId))
+                : null;
 
-              const stableExpId = String(targetExpId || relatedExpense?._id || '');
-              const isExpenseCardCandidate = actType === 'EXPENSE_ADDED' || (Boolean(relatedExpense) && actType !== 'EXPENSE_UPDATED');
-              const shouldRenderExpenseCard = isExpenseCardCandidate && stableExpId && !renderedExpenseIds.has(stableExpId);
+              // If an activity was an expense addition/update but the expense was deleted, omit it completely
+              if ((actType === 'EXPENSE_ADDED' || actType === 'EXPENSE_UPDATED') && !relatedExpense) {
+                return null;
+              }
+
+              const stableExpId = String(relatedExpense?._id || '');
+              const isExpenseCardCandidate = Boolean(relatedExpense) && actType !== 'EXPENSE_UPDATED';
+              const shouldRenderExpenseCard = Boolean(isExpenseCardCandidate && stableExpId && !renderedExpenseIds.has(stableExpId));
 
               if (shouldRenderExpenseCard) {
                 renderedExpenseIds.add(stableExpId);

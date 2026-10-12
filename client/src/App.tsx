@@ -43,7 +43,11 @@ import {
   apiJoinWithToken, apiDeleteExpense, apiDeleteTrip
 } from './services/api';
 import { joinTripRoom, leaveTripRoom, getSocket } from './services/socket';
-import { getTripCache, isTripCacheFresh, setTripCache, updateTripCacheItem, invalidateTripReportCache, clearTripCache, deleteTripCache } from './services/tripCache';
+import {
+  getTripCache, isTripCacheFresh, setTripCache, updateTripCacheItem,
+  invalidateTripReportCache, clearTripCache, deleteTripCache,
+  removeExpenseFromTripCache, invalidateTripWorkspaceCache
+} from './services/tripCache';
 import { Compass, MessageSquare, AlertCircle } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -551,6 +555,56 @@ export const App: React.FC = () => {
         handleWorkspaceSync();
       };
 
+      const handleExpenseDeleted = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const deletedExpId = String(payload?.expenseId || payload?._id || '').trim();
+
+        if (!deletedExpId) {
+          handleExpenseSyncWithInvalidation(payload);
+          return;
+        }
+
+        // 1. Immediately purge from cache for target trip and invalidate report
+        if (targetTripId) {
+          removeExpenseFromTripCache(targetTripId, deletedExpId);
+        } else if (activeTripIdRef.current) {
+          removeExpenseFromTripCache(activeTripIdRef.current, deletedExpId);
+        }
+
+        const activeIdNormalized = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeIdNormalized && targetTripId !== activeIdNormalized) {
+          // Event belongs to a different trip, do not modify current active trip state
+          return;
+        }
+
+        // 2. Immediately update UI state for active trip
+        setExpenses((prev) => {
+          const filtered = prev.filter((e) => String(e._id) !== deletedExpId);
+          const remainingSpent = filtered.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+          setTripData((tPrev: any) => (tPrev ? { ...tPrev, totalSpent: remainingSpent } : tPrev));
+          setBudgetData((bPrev: any) =>
+            bPrev ? { ...bPrev, totalSpent: remainingSpent, spent: remainingSpent } : bPrev
+          );
+          return filtered;
+        });
+
+        // 3. Immediately remove any activities tied to deleted expense from feed
+        setActivities((prev) =>
+          prev.filter((act) => {
+            const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+            return String(actExpId) !== deletedExpId;
+          })
+        );
+
+        // 4. Clear selected expense if it was the deleted one
+        setSelectedExpense((prev: any) =>
+          prev && String(prev._id) === deletedExpId ? null : prev
+        );
+
+        // 5. Non-blocking sync for settlements and dependent calculations
+        handleWorkspaceSync();
+      };
+
       const handleTripUpdated = (updatedTrip: any) => {
         if (updatedTrip && String(updatedTrip._id) === activeTripIdRef.current) {
           setTripData((prev: any) => ({ ...prev, ...updatedTrip }));
@@ -575,7 +629,7 @@ export const App: React.FC = () => {
       socket.on('activity.created', handleActivityCreated);
       socket.on('expense.created', handleExpenseSyncWithInvalidation);
       socket.on('expense.updated', handleExpenseUpdated);
-      socket.on('expense.deleted', handleExpenseSyncWithInvalidation);
+      socket.on('expense.deleted', handleExpenseDeleted);
       socket.on('member.joined', handleWorkspaceSync);
       socket.on('member.removed', handleWorkspaceSync);
       socket.on('itinerary.created', handleWorkspaceSync);
@@ -592,7 +646,7 @@ export const App: React.FC = () => {
         socket.off('activity.created', handleActivityCreated);
         socket.off('expense.created', handleExpenseSyncWithInvalidation);
         socket.off('expense.updated', handleExpenseUpdated);
-        socket.off('expense.deleted', handleExpenseSyncWithInvalidation);
+        socket.off('expense.deleted', handleExpenseDeleted);
         socket.off('member.joined', handleWorkspaceSync);
         socket.off('member.removed', handleWorkspaceSync);
         socket.off('itinerary.created', handleWorkspaceSync);
@@ -691,13 +745,53 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteExpense = async (id: string) => {
-    if (!activeTripId) return;
+    if (!activeTripId || !id) return;
+    const expIdStr = String(id);
+    const previousExpenses = [...expenses];
+    const previousActivities = [...activities];
+    const previousTripData = tripData;
+    const previousBudgetData = budgetData;
+
     try {
-      invalidateTripReportCache(activeTripId);
-      await apiDeleteExpense(activeTripId, id);
-      loadWorkspaceData(activeTripId);
-    } catch (err) {
-      console.error(err);
+      // 1. Immediately purge from in-memory cache and invalidate report cache
+      removeExpenseFromTripCache(activeTripId, expIdStr);
+
+      // 2. Optimistic UI update: Remove from expenses list immediately
+      const remainingExpenses = expenses.filter((e) => String(e._id) !== expIdStr);
+      setExpenses(remainingExpenses);
+
+      // 3. Optimistic UI update: Remove related activities from chat feed immediately
+      setActivities((prev) =>
+        prev.filter((act) => {
+          const actExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
+          return String(actExpId) !== expIdStr;
+        })
+      );
+
+      // 4. Close detail sheet if currently viewing this expense
+      setSelectedExpense((prev: any) => (prev && String(prev._id) === expIdStr ? null : prev));
+
+      // 5. Optimistically update trip and budget totals immediately
+      const remainingSpent = remainingExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+      setTripData((prev: any) => (prev ? { ...prev, totalSpent: remainingSpent } : prev));
+      setBudgetData((prev: any) =>
+        prev ? { ...prev, totalSpent: remainingSpent, spent: remainingSpent } : prev
+      );
+
+      // 6. Delete on backend
+      await apiDeleteExpense(activeTripId, expIdStr);
+
+      // 7. Background revalidate with authoritative calculation
+      loadWorkspaceData(activeTripId, true);
+    } catch (err: any) {
+      console.error('[Expense] Error deleting expense:', err);
+      // Rollback optimistic state if backend deletion failed
+      setExpenses(previousExpenses);
+      setActivities(previousActivities);
+      setTripData(previousTripData);
+      setBudgetData(previousBudgetData);
+      alert(err.message || 'Failed to delete expense. Please try again.');
+      loadWorkspaceData(activeTripId, false);
     }
   };
 
@@ -925,6 +1019,7 @@ export const App: React.FC = () => {
                         onRefresh={() => {
                           loadWorkspaceData(activeTripId);
                         }}
+                        onDeleteExpense={handleDeleteExpense}
                       />
                     </div>
                   )}

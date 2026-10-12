@@ -415,13 +415,42 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
       idempotencyKey: { $regex: `^split_${expenseId}_` }
     });
 
-    await logActivity(tripId, req.user!.userId, 'EXPENSE_DELETED', `deleted expense "${title}"`);
-    emitToTrip(tripId, 'expense.deleted', { expenseId });
+    // Clean up activity log items for this deleted expense so chat feed doesn't retain ghost cards
+    await Activity.deleteMany({
+      tripId,
+      $or: [
+        { 'metadata.expenseId': expenseId },
+        { 'metadata.expenseId': new mongoose.Types.ObjectId(expenseId) },
+        { 'metadata.expense._id': expenseId },
+        { 'metadata.expense._id': new mongoose.Types.ObjectId(expenseId) }
+      ]
+    });
 
+    await logActivity(tripId, req.user!.userId, 'EXPENSE_DELETED', `deleted expense "${title}"`);
+
+    // Recalculate trip balances and status from remaining database records
     const freshCalculation = await calculateTripBalancesAndSettlements(tripId);
+    const trip = await Trip.findById(tripId);
+    if (trip) {
+      trip.settlementStatus = freshCalculation.settlementStatus;
+      if (freshCalculation.settlementStatus === 'SETTLED' && trip.status === 'COMPLETED') {
+        trip.status = 'SETTLED';
+      } else if (freshCalculation.settlementStatus !== 'SETTLED' && trip.status === 'SETTLED') {
+        trip.status = 'COMPLETED';
+      }
+      await trip.save();
+      emitToTrip(tripId, 'trip.updated', trip);
+    }
+
+    emitToTrip(tripId, 'expense.deleted', { tripId, expenseId });
     emitToTrip(tripId, 'settlement.updated', { tripId, calculation: freshCalculation });
 
-    res.json({ message: 'Expense deleted successfully' });
+    res.json({
+      message: 'Expense deleted successfully',
+      tripId,
+      expenseId,
+      calculation: freshCalculation
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Error deleting expense' });
   }
