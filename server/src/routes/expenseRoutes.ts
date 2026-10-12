@@ -12,7 +12,7 @@ import { deleteFromCloudinary } from '../config/cloudinary';
 const router = Router();
 
 // Helper to calculate participants split shares
-// Helper to calculate participants split shares & status
+// Helper to calculate participants split shares & status using integer paise
 const calculateShares = (
   amount: number,
   splitType: 'EQUAL' | 'CUSTOM' | 'PERCENTAGE',
@@ -20,42 +20,82 @@ const calculateShares = (
   paidById?: string
 ) => {
   const payerIdStr = paidById ? paidById.toString() : '';
+  const totalAmountPaise = Math.round((Number(amount) || 0) * 100);
+  const count = participantsInput.length;
+
+  if (count === 0) return [];
 
   if (splitType === 'EQUAL') {
-    const count = participantsInput.length;
-    const equalShare = count > 0 ? Math.round((amount / count) * 100) / 100 : 0;
-    return participantsInput.map(p => {
+    const baseSharePaise = Math.floor(totalAmountPaise / count);
+    const remainderPaise = totalAmountPaise % count;
+
+    // Stable deterministic order (by userId string) so remainder allocation is predictable
+    const sortedIndices = participantsInput
+      .map((p, index) => ({ idStr: p.userId.toString(), index }))
+      .sort((a, b) => a.idStr.localeCompare(b.idStr));
+
+    const extraMap: Record<number, number> = {};
+    for (let r = 0; r < remainderPaise; r++) {
+      extraMap[sortedIndices[r].index] = 1;
+    }
+
+    return participantsInput.map((p, index) => {
       const uIdStr = p.userId.toString();
       const isPayer = payerIdStr && uIdStr === payerIdStr;
+      const sharePaise = baseSharePaise + (extraMap[index] || 0);
       return {
         userId: new mongoose.Types.ObjectId(p.userId),
-        share: equalShare,
+        share: sharePaise / 100,
         percentage: Math.round((100 / count) * 10) / 10,
         status: p.status || (isPayer ? 'PAID' : 'PENDING')
       };
     });
   } else if (splitType === 'PERCENTAGE') {
-    return participantsInput.map(p => {
-      const pct = p.percentage || 0;
-      const sh = Math.round((amount * (pct / 100)) * 100) / 100;
+    let sumPaise = 0;
+    const computed = participantsInput.map(p => {
+      const pct = Number(p.percentage) || 0;
+      const shPaise = Math.round((totalAmountPaise * pct) / 100);
+      sumPaise += shPaise;
       const uIdStr = p.userId.toString();
       const isPayer = payerIdStr && uIdStr === payerIdStr;
       return {
         userId: new mongoose.Types.ObjectId(p.userId),
-        share: sh,
+        sharePaise: shPaise,
         percentage: pct,
         status: p.status || (isPayer ? 'PAID' : 'PENDING')
       };
     });
+
+    const totalPct = participantsInput.reduce((s, p) => s + (Number(p.percentage) || 0), 0);
+    const diffPaise = totalAmountPaise - sumPaise;
+    if (Math.abs(totalPct - 100) < 0.01 && diffPaise !== 0 && computed.length > 0) {
+      let targetIdx = 0;
+      let maxPct = -1;
+      computed.forEach((c, idx) => {
+        if (c.percentage > maxPct) {
+          maxPct = c.percentage;
+          targetIdx = idx;
+        }
+      });
+      computed[targetIdx].sharePaise += diffPaise;
+    }
+
+    return computed.map(c => ({
+      userId: c.userId,
+      share: c.sharePaise / 100,
+      percentage: c.percentage,
+      status: c.status
+    }));
   } else {
     // CUSTOM
     return participantsInput.map(p => {
       const uIdStr = p.userId.toString();
       const isPayer = payerIdStr && uIdStr === payerIdStr;
+      const sh = p.share !== undefined ? Number(p.share) : 0;
       return {
         userId: new mongoose.Types.ObjectId(p.userId),
-        share: p.share !== undefined ? p.share : 0,
-        percentage: amount > 0 ? Math.round(((p.share || 0) / amount) * 100) : 0,
+        share: Math.round(sh * 100) / 100,
+        percentage: amount > 0 ? Math.round(((sh || 0) / amount) * 100) : 0,
         status: p.status || (isPayer ? 'PAID' : 'PENDING')
       };
     });

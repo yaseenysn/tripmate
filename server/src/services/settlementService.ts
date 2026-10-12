@@ -256,9 +256,14 @@ export const calculateTripBalancesAndSettlements = async (
   });
 
   // 2. Fetch all expenses for the trip
-  const expenses = await Expense.find({ tripId: tripObjectId }).sort({ date: 1 });
+  const expenses = await Expense.find({ tripId: tripObjectId }).sort({ date: 1, _id: 1 });
   let totalExpensesPaise = 0;
   const detailedExpenseSplits: DetailedExpenseSplit[] = [];
+
+  // Track rotating remainder offset per participant group for EQUAL splits
+  // so that indivisible paise remainders rotate deterministically across expenses
+  // and cancel out completely when the total divides evenly (e.g. 1000/3 and 500/3 sum to 1500/3 = 500 each)
+  const equalGroupRemainderOffsetMap: Record<string, number> = {};
 
   expenses.forEach((exp) => {
     const expPaise = toPaise(exp.amount);
@@ -292,9 +297,102 @@ export const calculateTripBalancesAndSettlements = async (
       });
     }
 
-    // Split shares allocated to participants
+    // Determine authoritative participant shares in integer paise
     const participants = exp.participants || [];
+    const partCount = participants.length;
     let sumSharePaise = 0;
+
+    const computedSharesPaise: Record<
+      string,
+      { sharePaise: number; explanation: string; roundingAdjustment: number }
+    > = {};
+
+    if (exp.splitType === 'EQUAL' && partCount > 0) {
+      const baseSharePaise = Math.floor(expPaise / partCount);
+      const remainderPaise = expPaise % partCount;
+
+      // Deterministic sorted list of participant IDs
+      const sortedParticipantIds = participants
+        .map((p) => (p.userId ? p.userId.toString() : ''))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+
+      const groupKey = sortedParticipantIds.join(',');
+      const currentOffset = equalGroupRemainderOffsetMap[groupKey] || 0;
+
+      const extraRecipients = new Set<string>();
+      for (let r = 0; r < remainderPaise; r++) {
+        const recipientId = sortedParticipantIds[(currentOffset + r) % partCount];
+        extraRecipients.add(recipientId);
+      }
+
+      // Advance remainder offset for this group
+      equalGroupRemainderOffsetMap[groupKey] = (currentOffset + remainderPaise) % partCount;
+
+      const baseAmountStr = fromPaise(baseSharePaise).toFixed(2);
+      participants.forEach((p) => {
+        const pId = p.userId ? p.userId.toString() : '';
+        if (pId) {
+          const hasExtra = extraRecipients.has(pId);
+          const pPaise = baseSharePaise + (hasExtra ? 1 : 0);
+          const expl =
+            remainderPaise === 0
+              ? `Equal split between ${partCount} members (Rs. ${fromPaise(pPaise).toFixed(2)} each)`
+              : (hasExtra
+                  ? `Equal split between ${partCount} members (Rs. ${baseAmountStr} + 1 paise indivisible remainder)`
+                  : `Equal split between ${partCount} members (Rs. ${baseAmountStr})`);
+          computedSharesPaise[pId] = {
+            sharePaise: pPaise,
+            explanation: expl,
+            roundingAdjustment: hasExtra ? 0.01 : 0
+          };
+        }
+      });
+    } else if (exp.splitType === 'PERCENTAGE' && partCount > 0) {
+      let sumPctPaise = 0;
+      const pctList: { pId: string; pct: number; pPaise: number }[] = [];
+      participants.forEach((p) => {
+        const pId = p.userId ? p.userId.toString() : '';
+        if (pId) {
+          const pct = p.percentage !== undefined ? Number(p.percentage) : 0;
+          const pPaise = pct > 0 ? Math.round((expPaise * pct) / 100) : toPaise(p.share);
+          sumPctPaise += pPaise;
+          pctList.push({ pId, pct, pPaise });
+        }
+      });
+
+      const totalPct = pctList.reduce((s, item) => s + item.pct, 0);
+      const diffPaise = expPaise - sumPctPaise;
+      // If percentages sum to ~100% and there is a 1-2 paise discrepancy, allocate to highest percentage
+      if (Math.abs(totalPct - 100) < 0.01 && diffPaise !== 0 && pctList.length > 0) {
+        let maxItem = pctList[0];
+        pctList.forEach((item) => {
+          if (item.pct > maxItem.pct) maxItem = item;
+        });
+        maxItem.pPaise += diffPaise;
+      }
+
+      pctList.forEach((item) => {
+        computedSharesPaise[item.pId] = {
+          sharePaise: item.pPaise,
+          explanation: `Percentage share (${item.pct}% of Rs. ${fromPaise(expPaise).toFixed(2)})`,
+          roundingAdjustment: 0
+        };
+      });
+    } else {
+      // CUSTOM split: preserve legitimate user custom shares
+      participants.forEach((p) => {
+        const pId = p.userId ? p.userId.toString() : '';
+        if (pId) {
+          const pPaise = toPaise(p.share);
+          computedSharesPaise[pId] = {
+            sharePaise: pPaise,
+            explanation: `Custom allocated amount of Rs. ${fromPaise(pPaise).toFixed(2)}`,
+            roundingAdjustment: 0
+          };
+        }
+      });
+    }
 
     participants.forEach((p) => {
       const participantId = p.userId ? p.userId.toString() : '';
@@ -311,19 +409,16 @@ export const calculateTripBalancesAndSettlements = async (
           memberSettlementsPaid[participantId] = [];
           memberSettlementsReceived[participantId] = [];
         }
-        const pSharePaise = toPaise(p.share);
+
+        const comp = computedSharesPaise[participantId] || {
+          sharePaise: toPaise(p.share),
+          explanation: `Allocated amount of Rs. ${fromPaise(toPaise(p.share)).toFixed(2)}`,
+          roundingAdjustment: 0
+        };
+
+        const pSharePaise = comp.sharePaise;
         balances[participantId].paiseShare += pSharePaise;
         sumSharePaise += pSharePaise;
-
-        let explanation = '';
-        if (exp.splitType === 'EQUAL') {
-          const perPerson = fromPaise(Math.round(expPaise / Math.max(1, participants.length)));
-          explanation = `Equal split between ${participants.length} members (~Rs. ${perPerson.toFixed(2)} each)`;
-        } else if (exp.splitType === 'PERCENTAGE') {
-          explanation = `Percentage share (${p.percentage || Math.round((pSharePaise / Math.max(1, expPaise)) * 100)}% of Rs. ${fromPaise(expPaise).toFixed(2)})`;
-        } else {
-          explanation = `Custom allocated amount of Rs. ${fromPaise(pSharePaise).toFixed(2)}`;
-        }
 
         if (!memberExpenseShares[participantId]) {
           memberExpenseShares[participantId] = [];
@@ -338,44 +433,28 @@ export const calculateTripBalancesAndSettlements = async (
           participantCount: participants.length,
           memberShare: fromPaise(pSharePaise),
           percentage: p.percentage,
-          roundingAdjustment: 0,
+          roundingAdjustment: comp.roundingAdjustment,
           paidByName: payerName,
-          explanation
+          explanation: comp.explanation
         });
       }
     });
 
-    // Explicit rounding adjustment for equal/fractional split discrepancies
-    const roundingDiff = expPaise - sumSharePaise;
-    if (roundingDiff !== 0 && payerId && balances[payerId]) {
-      // Adjust residual single paise on the payer's own allocated share
-      balances[payerId].paiseShare += roundingDiff;
-      const payerShareEntry = memberExpenseShares[payerId]?.find(
-        (e) => e.expenseId === exp._id.toString()
-      );
-      if (payerShareEntry) {
-        payerShareEntry.memberShare = fromPaise(
-          toPaise(payerShareEntry.memberShare) + roundingDiff
-        );
-        payerShareEntry.roundingAdjustment = fromPaise(roundingDiff);
-        payerShareEntry.explanation += ` (+Rs. ${fromPaise(roundingDiff).toFixed(2)} rounding adjustment)`;
-      }
-    }
-
     // Detailed expense split record for transparency audit
     const partDetails = participants.map((p) => {
       const pId = p.userId ? p.userId.toString() : '';
+      const comp = computedSharesPaise[pId];
+      const authoritativeShare = comp ? fromPaise(comp.sharePaise) : (p.share || 0);
       return {
         userId: pId,
         name: userMap[pId]?.name || 'Unknown',
-        share: p.share,
+        share: authoritativeShare,
         percentage: p.percentage,
         status: p.status
       };
     });
 
-    const allocatedPaise = sumSharePaise + (roundingDiff !== 0 ? roundingDiff : 0);
-    const isReconciledExp = allocatedPaise === expPaise;
+    const isReconciledExp = sumSharePaise === expPaise;
 
     detailedExpenseSplits.push({
       _id: exp._id.toString(),
@@ -389,12 +468,12 @@ export const calculateTripBalancesAndSettlements = async (
       },
       splitType: exp.splitType,
       participants: partDetails,
-      allocatedTotal: fromPaise(allocatedPaise),
-      roundingAdjustment: fromPaise(roundingDiff),
+      allocatedTotal: fromPaise(sumSharePaise),
+      roundingAdjustment: 0,
       isReconciled: isReconciledExp,
       validationWarning: isReconciledExp
         ? undefined
-        : `Discrepancy: Participant shares total Rs. ${fromPaise(allocatedPaise).toFixed(2)} which does not match expense amount Rs. ${fromPaise(expPaise).toFixed(2)}.`
+        : `Discrepancy: Participant shares total Rs. ${fromPaise(sumSharePaise).toFixed(2)} which does not match expense amount Rs. ${fromPaise(expPaise).toFixed(2)}.`
     });
   });
 
@@ -543,19 +622,8 @@ export const calculateTripBalancesAndSettlements = async (
   const isReconciled = Math.abs(sumNetPaise) === 0;
   const discrepancy = fromPaise(sumNetPaise);
 
-  // If there's an explicit 1-2 paise rounding residual across members, handle gracefully
-  if (!isReconciled && Math.abs(sumNetPaise) <= memberBalances.length && memberBalances.length > 0) {
-    const sorted = [...memberBalances].sort(
-      (a, b) => Math.abs(b.netBalance) - Math.abs(a.netBalance)
-    );
-    if (sorted[0]) {
-      const adjustedNet = fromPaise(toPaise(sorted[0].netBalance) - sumNetPaise);
-      sorted[0].netBalance = adjustedNet;
-      if (sorted[0].calculationDetails) {
-        sorted[0].calculationDetails.arithmetic.netBalance = adjustedNet;
-      }
-    }
-  }
+  // Zero-sum invariant: Integer paise allocation ensures all expenses reconcile exactly.
+  // We do not artificially alter member balances or hide discrepancies.
 
   // 6. Calculate Minimal Debt Settlement Suggestions & Explanations
   const debtors: { userId: string; netPaise: number }[] = [];

@@ -20,7 +20,7 @@ const runTests = async () => {
   await connectDB();
 
   let testPassed = 0;
-  let testTotal = 24;
+  let testTotal = 27;
 
   const createdUserIds: mongoose.Types.ObjectId[] = [];
   const createdTripIds: mongoose.Types.ObjectId[] = [];
@@ -671,6 +671,195 @@ const runTests = async () => {
       testPassed++;
     } else {
       fail(`Test 24: Failed custom split check (label: ${calc3Custom.perMemberExpenseLabel}, avg: ${calc3Custom.averageExpensePerMember})`);
+    }
+
+    // -------------------------------------------------------------
+    // TEST 25: Regression for 3-member ₹3,000 equal splits across multiple payers
+    // -------------------------------------------------------------
+    const tripRound = await Trip.create({
+      name: 'Trip Rounding Regression',
+      destination: 'Manali',
+      startDate: new Date('2026-12-15'),
+      endDate: new Date('2026-12-20'),
+      createdBy: userA._id,
+      status: 'ACTIVE'
+    });
+    createdTripIds.push(tripRound._id);
+
+    await TripMember.create([
+      { tripId: tripRound._id, userId: userA._id, role: 'ADMIN' },
+      { tripId: tripRound._id, userId: userB._id, role: 'MEMBER' },
+      { tripId: tripRound._id, userId: userC._id, role: 'MEMBER' }
+    ]);
+
+    // Expense 1: ₹1,500 paid by userA (Alice / Yaseen)
+    await Expense.create({
+      tripId: tripRound._id,
+      title: 'Resort Stay',
+      amount: 1500,
+      paidBy: userA._id,
+      splitType: 'EQUAL',
+      participants: [
+        { userId: userA._id, share: 500, status: 'PAID' },
+        { userId: userB._id, share: 500, status: 'PENDING' },
+        { userId: userC._id, share: 500, status: 'PENDING' }
+      ],
+      createdBy: userA._id
+    });
+
+    // Expense 2: ₹1,000 paid by userB (Bob / Bilal)
+    await Expense.create({
+      tripId: tripRound._id,
+      title: 'Dinner Buffet',
+      amount: 1000,
+      paidBy: userB._id,
+      splitType: 'EQUAL',
+      participants: [
+        { userId: userA._id, share: 333.33, status: 'PENDING' },
+        { userId: userB._id, share: 333.33, status: 'PAID' },
+        { userId: userC._id, share: 333.33, status: 'PENDING' }
+      ],
+      createdBy: userB._id
+    });
+
+    // Expense 3: ₹500 paid by userC (Charlie / Amal)
+    await Expense.create({
+      tripId: tripRound._id,
+      title: 'Fuel & Toll',
+      amount: 500,
+      paidBy: userC._id,
+      splitType: 'EQUAL',
+      participants: [
+        { userId: userA._id, share: 166.67, status: 'PENDING' },
+        { userId: userB._id, share: 166.67, status: 'PENDING' },
+        { userId: userC._id, share: 166.67, status: 'PAID' }
+      ],
+      createdBy: userC._id
+    });
+
+    const calcRound = await calculateTripBalancesAndSettlements(tripRound._id.toString());
+    const bAliceR = calcRound.memberBalances.find(m => m.userId === userA._id.toString());
+    const bBobR = calcRound.memberBalances.find(m => m.userId === userB._id.toString());
+    const bCharlieR = calcRound.memberBalances.find(m => m.userId === userC._id.toString());
+
+    const hasNoBobSettlement = !calcRound.suggestedSettlements.some(
+      s => s.fromUser._id === userB._id.toString() || s.toUser._id === userB._id.toString()
+    );
+    const hasSingle500Settlement =
+      calcRound.suggestedSettlements.length === 1 &&
+      calcRound.suggestedSettlements[0].fromUser._id === userC._id.toString() &&
+      calcRound.suggestedSettlements[0].toUser._id === userA._id.toString() &&
+      calcRound.suggestedSettlements[0].amount === 500;
+
+    if (
+      calcRound.totalExpenses === 3000 &&
+      bAliceR?.totalShare === 1000 &&
+      bBobR?.totalShare === 1000 &&
+      bCharlieR?.totalShare === 1000 &&
+      bAliceR?.netBalance === 500 &&
+      bBobR?.netBalance === 0 &&
+      bCharlieR?.netBalance === -500 &&
+      calcRound.isReconciled &&
+      hasSingle500Settlement &&
+      hasNoBobSettlement
+    ) {
+      pass('Test 25: Multi-expense ₹3,000 equal splits cancel fractional remainders exactly (shares ₹1,000 each, 0 residual, Amal pays Yaseen ₹500)');
+      testPassed++;
+    } else {
+      fail(
+        `Test 25: Shares/Balances mismatch (Shares: Alice=${bAliceR?.totalShare}, Bob=${bBobR?.totalShare}, Charlie=${bCharlieR?.totalShare}; Balances: Alice=${bAliceR?.netBalance}, Bob=${bBobR?.netBalance}, Charlie=${bCharlieR?.netBalance}; Settlements: ${calcRound.suggestedSettlements.length})`
+      );
+    }
+
+    // -------------------------------------------------------------
+    // TEST 26: Single ₹3,000 equal split expense produces exact ₹1,000.00 shares
+    // -------------------------------------------------------------
+    const tripSingle3k = await Trip.create({
+      name: 'Trip Single 3k Expense',
+      destination: 'Shimla',
+      startDate: new Date('2026-12-20'),
+      endDate: new Date('2026-12-25'),
+      createdBy: userA._id,
+      status: 'ACTIVE'
+    });
+    createdTripIds.push(tripSingle3k._id);
+
+    await TripMember.create([
+      { tripId: tripSingle3k._id, userId: userA._id, role: 'ADMIN' },
+      { tripId: tripSingle3k._id, userId: userB._id, role: 'MEMBER' },
+      { tripId: tripSingle3k._id, userId: userC._id, role: 'MEMBER' }
+    ]);
+
+    await Expense.create({
+      tripId: tripSingle3k._id,
+      title: 'Full Package Booking',
+      amount: 3000,
+      paidBy: userA._id,
+      splitType: 'EQUAL',
+      participants: [
+        { userId: userA._id, share: 1000, status: 'PAID' },
+        { userId: userB._id, share: 1000, status: 'PENDING' },
+        { userId: userC._id, share: 1000, status: 'PENDING' }
+      ],
+      createdBy: userA._id
+    });
+
+    const calcSingle3k = await calculateTripBalancesAndSettlements(tripSingle3k._id.toString());
+    const allShares1000 = calcSingle3k.memberBalances.every(m => m.totalShare === 1000);
+
+    if (calcSingle3k.totalExpenses === 3000 && allShares1000 && calcSingle3k.isReconciled) {
+      pass('Test 26: Single ₹3,000 expense split equally produces exactly ₹1,000.00 share for each member');
+      testPassed++;
+    } else {
+      fail(`Test 26: Single ₹3k expense shares not ₹1,000 each`);
+    }
+
+    // -------------------------------------------------------------
+    // TEST 27: Indivisible remainder allocation (₹10 split among 3 members = ₹3.34, ₹3.33, ₹3.33)
+    // -------------------------------------------------------------
+    const tripIndivisible = await Trip.create({
+      name: 'Trip Indivisible Remainder',
+      destination: 'Rishikesh',
+      startDate: new Date('2026-12-25'),
+      endDate: new Date('2026-12-28'),
+      createdBy: userA._id,
+      status: 'ACTIVE'
+    });
+    createdTripIds.push(tripIndivisible._id);
+
+    await TripMember.create([
+      { tripId: tripIndivisible._id, userId: userA._id, role: 'ADMIN' },
+      { tripId: tripIndivisible._id, userId: userB._id, role: 'MEMBER' },
+      { tripId: tripIndivisible._id, userId: userC._id, role: 'MEMBER' }
+    ]);
+
+    await Expense.create({
+      tripId: tripIndivisible._id,
+      title: 'Chai & Snacks',
+      amount: 10,
+      paidBy: userA._id,
+      splitType: 'EQUAL',
+      participants: [
+        { userId: userA._id, share: 3.33, status: 'PAID' },
+        { userId: userB._id, share: 3.33, status: 'PENDING' },
+        { userId: userC._id, share: 3.33, status: 'PENDING' }
+      ],
+      createdBy: userA._id
+    });
+
+    const calcIndivisible = await calculateTripBalancesAndSettlements(tripIndivisible._id.toString());
+    const sumShares = calcIndivisible.memberBalances.reduce((s, m) => s + m.totalShare, 0);
+
+    if (
+      calcIndivisible.totalExpenses === 10 &&
+      Math.abs(sumShares - 10) < 0.001 &&
+      calcIndivisible.isReconciled &&
+      calcIndivisible.discrepancy === 0
+    ) {
+      pass('Test 27: Indivisible remainder allocated deterministically without creating or leaking paise');
+      testPassed++;
+    } else {
+      fail(`Test 27: Indivisible remainder sum mismatch (sumShares=${sumShares})`);
     }
 
   } catch (err: any) {
