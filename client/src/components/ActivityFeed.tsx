@@ -23,6 +23,7 @@ interface ActivityFeedProps {
   members: any[];
   currentUser: any;
   tripId?: string;
+  isLoading?: boolean;
   onSelectExpense: (exp: any) => void;
   onEditExpense?: (exp: any) => void;
   onDeleteExpense?: (id: string, e: React.MouseEvent) => void;
@@ -86,6 +87,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   members = [],
   currentUser,
   tripId,
+  isLoading = false,
   onSelectExpense,
   onEditExpense,
   onDeleteExpense,
@@ -253,7 +255,47 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
         backgroundSize: '24px 24px'
       }}
     >
-      {combinedStream.length === 0 ? (
+      {isLoading && combinedStream.length === 0 ? (
+        <div className="space-y-4 py-4 animate-pulse select-none">
+          {/* Centered Date Pill Skeleton */}
+          <div className="flex items-center justify-center my-3">
+            <div className="w-24 h-6 bg-slate-800/80 rounded-md border border-slate-700/50" />
+          </div>
+
+          {/* Incoming Message Skeleton */}
+          <div className="flex justify-start">
+            <div className="w-60 sm:w-72 bg-[#202c33]/70 rounded-2xl rounded-tl-sm p-3.5 border border-slate-800/80 space-y-2">
+              <div className="w-20 h-3 bg-slate-700/60 rounded" />
+              <div className="w-48 h-3.5 bg-slate-700/40 rounded" />
+              <div className="w-32 h-3.5 bg-slate-700/40 rounded" />
+            </div>
+          </div>
+
+          {/* Outgoing Message Skeleton */}
+          <div className="flex justify-end">
+            <div className="w-52 sm:w-64 bg-[#005c4b]/50 rounded-2xl rounded-tr-sm p-3.5 border border-emerald-900/40 space-y-2">
+              <div className="w-40 h-3.5 bg-emerald-800/40 rounded" />
+              <div className="w-28 h-3 bg-emerald-800/30 rounded" />
+            </div>
+          </div>
+
+          {/* Incoming Message Skeleton 2 */}
+          <div className="flex justify-start">
+            <div className="w-48 sm:w-56 bg-[#202c33]/70 rounded-2xl rounded-tl-sm p-3 border border-slate-800/80 space-y-2">
+              <div className="w-16 h-3 bg-slate-700/60 rounded" />
+              <div className="w-36 h-3.5 bg-slate-700/40 rounded" />
+            </div>
+          </div>
+
+          {/* Centered Loading Indicator */}
+          <div className="flex justify-center py-4">
+            <div className="bg-[#182229] border border-slate-800/80 px-4 py-2 rounded-full text-xs text-slate-300 font-medium shadow-md flex items-center gap-2.5">
+              <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+              <span>Loading chat messages...</span>
+            </div>
+          </div>
+        </div>
+      ) : combinedStream.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
           <div className="w-14 h-14 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-emerald-400 shadow-md">
             💬

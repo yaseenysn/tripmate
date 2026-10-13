@@ -11,6 +11,7 @@ export interface TripWorkspaceData {
   documents: any[];
   activities: any[];
   cachedAt: number;
+  loadedSections?: Record<string, boolean>;
 }
 
 export interface CachedReportEntry {
@@ -22,8 +23,8 @@ export interface CachedReportEntry {
 const cacheMap = new Map<string, any>();
 
 // TTL Policies
-const WORKSPACE_CACHE_TTL_MS = 60 * 1000; // 60 seconds freshness for workspace
-const REPORT_CACHE_TTL_MS = 60 * 1000;    // 60 seconds freshness for authoritative reports
+const WORKSPACE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes freshness for workspace
+const REPORT_CACHE_TTL_MS = 60 * 1000;         // 60 seconds freshness for authoritative reports
 
 const getWorkspaceKey = (tripId: string) => `trip:${tripId}:workspace`;
 const getReportKey = (tripId: string) => `trip:${tripId}:report`;
@@ -54,14 +55,72 @@ export const isTripCacheFresh = (tripId: string): boolean => {
 };
 
 /**
- * Store complete workspace data for a tripId
+ * Check if a specific secondary section has been marked loaded in the cache
+ */
+export const isSectionLoadedInCache = (tripId: string, section: string): boolean => {
+  if (!tripId) return false;
+  const cached = cacheMap.get(getWorkspaceKey(tripId)) as TripWorkspaceData | undefined;
+  if (!cached) return false;
+  return Boolean(cached.loadedSections?.[section]);
+};
+
+/**
+ * Mark a specific secondary section as loaded in the cache
+ */
+export const markSectionLoadedInCache = (tripId: string, section: string): void => {
+  if (!tripId) return;
+  const cached = cacheMap.get(getWorkspaceKey(tripId)) as TripWorkspaceData | undefined;
+  if (cached) {
+    if (!cached.loadedSections) cached.loadedSections = {};
+    cached.loadedSections[section] = true;
+  }
+};
+
+/**
+ * Invalidate a specific secondary section or all sections in the trip workspace cache
+ */
+export const invalidateSectionInCache = (tripId: string, section?: string): void => {
+  if (!tripId) return;
+  const cached = cacheMap.get(getWorkspaceKey(tripId)) as TripWorkspaceData | undefined;
+  if (cached) {
+    if (section) {
+      if (cached.loadedSections) {
+        cached.loadedSections[section] = false;
+      }
+      if (section === 'settlements') {
+        cached.settlements = null;
+      }
+    } else {
+      cached.loadedSections = {};
+    }
+    console.log(`[TripCache] Invalidated section "${section || 'ALL'}" for ${tripId}`);
+  }
+};
+
+/**
+ * Store workspace data for a tripId with intelligent merging of partial updates
  */
 export const setTripCache = (
   tripId: string,
-  data: Omit<TripWorkspaceData, 'cachedAt'>
+  data: Partial<Omit<TripWorkspaceData, 'cachedAt'>>
 ): TripWorkspaceData => {
+  const existing = cacheMap.get(getWorkspaceKey(tripId)) as TripWorkspaceData | undefined;
   const entry: TripWorkspaceData = {
-    ...data,
+    trip: data.trip !== undefined ? data.trip : existing?.trip,
+    members: data.members !== undefined ? data.members : (existing?.members || []),
+    expenses: data.expenses !== undefined ? data.expenses : (existing?.expenses || []),
+    budget: data.budget !== undefined ? data.budget : (existing?.budget || null),
+    itinerary: data.itinerary !== undefined ? data.itinerary : (existing?.itinerary || []),
+    bookings: data.bookings !== undefined ? data.bookings : (existing?.bookings || []),
+    settlements: data.settlements !== undefined ? data.settlements : (existing?.settlements || null),
+    tasks: data.tasks !== undefined ? data.tasks : (existing?.tasks || []),
+    polls: data.polls !== undefined ? data.polls : (existing?.polls || []),
+    documents: data.documents !== undefined ? data.documents : (existing?.documents || []),
+    activities: data.activities !== undefined ? data.activities : (existing?.activities || []),
+    loadedSections: {
+      ...(existing?.loadedSections || {}),
+      ...(data.loadedSections || {})
+    },
     cachedAt: Date.now()
   };
   cacheMap.set(getWorkspaceKey(tripId), entry);
@@ -176,13 +235,14 @@ export const removeExpenseFromTripCache = (tripId: string, expenseId: string): v
 
     // 5. Invalidate cached settlements so old calculations aren't presented
     cached.settlements = null;
-
-    // 6. Stale-mark the cache (cachedAt = 0) so background revalidation fetches fresh server data
-    cached.cachedAt = 0;
-    console.log(`[TripCache] Removed expense ${expenseId} and stale-marked workspace cache for ${tripId}`);
+    if (cached.loadedSections) {
+      cached.loadedSections['settlements'] = false;
+    }
+    cached.cachedAt = Date.now();
+    console.log(`[TripCache] Removed expense ${expenseId} and updated workspace cache for ${tripId}`);
   }
 
-  // 7. Invalidate the authoritative report cache for this trip
+  // 6. Invalidate the authoritative report cache for this trip
   invalidateTripReportCache(tripId);
 };
 
@@ -195,6 +255,7 @@ export const invalidateTripWorkspaceCache = (tripId: string): void => {
   const cached = cacheMap.get(key) as TripWorkspaceData | undefined;
   if (cached) {
     cached.cachedAt = 0;
+    cached.loadedSections = {};
   }
   invalidateTripReportCache(tripId);
   console.log(`[TripCache] Stale-marked workspace and invalidated report cache for ${tripId}`);

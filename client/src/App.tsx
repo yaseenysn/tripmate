@@ -47,7 +47,8 @@ import { joinTripRoom, leaveTripRoom, getSocket } from './services/socket';
 import {
   getTripCache, isTripCacheFresh, setTripCache, updateTripCacheItem,
   invalidateTripReportCache, clearTripCache, deleteTripCache,
-  removeExpenseFromTripCache, invalidateTripWorkspaceCache
+  removeExpenseFromTripCache, invalidateTripWorkspaceCache,
+  isSectionLoadedInCache, markSectionLoadedInCache, invalidateSectionInCache
 } from './services/tripCache';
 import { Compass, MessageSquare, AlertCircle } from 'lucide-react';
 
@@ -61,8 +62,24 @@ export const App: React.FC = () => {
 
   // Active Trip Race-Condition & Sequencing Controls
   const activeTripIdRef = useRef<string | null>(null);
+  const activeSectionRef = useRef<string>('feed');
+  const sectionVersionRef = useRef<Map<string, number>>(new Map());
   const loadSeqRef = useRef<number>(0);
   const inFlightLoadsRef = useRef<Map<string, Promise<any>>>(new Map());
+  const inFlightSectionRef = useRef<Map<string, Promise<any>>>(new Map());
+  const lastSectionFetchTimeRef = useRef<Map<string, number>>(new Map());
+
+  // Helpers for section mutation tracking across rapid switches & preloads
+  const bumpSectionVersion = (tId: string, section: string): number => {
+    const key = `${tId}:${section}`;
+    const next = (sectionVersionRef.current.get(key) || 0) + 1;
+    sectionVersionRef.current.set(key, next);
+    return next;
+  };
+
+  const getSectionVersion = (tId: string, section: string): number => {
+    return sectionVersionRef.current.get(`${tId}:${section}`) || 0;
+  };
 
   // Workspace State
   const [tripData, setTripData] = useState<any>(null);
@@ -99,6 +116,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     activeTripIdRef.current = activeTripId;
   }, [activeTripId]);
+
+  // Synchronize ref on activeSection change to prevent stale closures in socket handlers
+  useEffect(() => {
+    activeSectionRef.current = activeSection;
+  }, [activeSection]);
 
   // Verify JWT session on load
   const initializeAuth = async () => {
@@ -267,7 +289,139 @@ export const App: React.FC = () => {
     return merged;
   };
 
-  // Load Active Trip Workspace Payload (with In-Memory Caching, Race-Condition Guards & Non-blocking Background Sync)
+  const safeFetch = async <T,>(promise: Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await promise;
+    } catch {
+      return fallback;
+    }
+  };
+
+  // Granular section refresh with debounce and in-flight deduplication
+  const refreshSection = async (tId: string, section: string, force = false): Promise<void> => {
+    if (!tId) return;
+
+    const key = `${tId}:${section}`;
+    const now = Date.now();
+    const lastTime = lastSectionFetchTimeRef.current.get(key) || 0;
+
+    // Deduplicate rapid duplicate triggers (e.g. mutation callback + socket event within 400ms)
+    if (!force && now - lastTime < 400) {
+      return;
+    }
+
+    // Reuse in-flight promise if already fetching this section
+    let inFlight = inFlightSectionRef.current.get(key);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const currentSeq = loadSeqRef.current;
+    lastSectionFetchTimeRef.current.set(key, now);
+
+    const fetchWorker = async () => {
+      try {
+        switch (section) {
+          case 'itinerary': {
+            const res = await apiGetItinerary(tId);
+            const items = res.items || [];
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setItinerary(items);
+            }
+            updateTripCacheItem(tId, 'itinerary', () => items);
+            markSectionLoadedInCache(tId, 'itinerary');
+            break;
+          }
+          case 'bookings': {
+            const res = await apiGetBookings(tId);
+            const bookingsList = res.bookings || [];
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setBookings(bookingsList);
+            }
+            updateTripCacheItem(tId, 'bookings', () => bookingsList);
+            markSectionLoadedInCache(tId, 'bookings');
+            break;
+          }
+          case 'tasks': {
+            const res = await apiGetTasks(tId);
+            const tasksList = res.tasks || [];
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setTasks(tasksList);
+            }
+            updateTripCacheItem(tId, 'tasks', () => tasksList);
+            markSectionLoadedInCache(tId, 'tasks');
+            break;
+          }
+          case 'polls': {
+            const res = await apiGetPolls(tId);
+            const pollsList = res.polls || [];
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setPolls(pollsList);
+            }
+            updateTripCacheItem(tId, 'polls', () => pollsList);
+            markSectionLoadedInCache(tId, 'polls');
+            break;
+          }
+          case 'documents': {
+            const res = await apiGetDocuments(tId);
+            const docs = res.documents || [];
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setDocuments(docs);
+            }
+            updateTripCacheItem(tId, 'documents', () => docs);
+            markSectionLoadedInCache(tId, 'documents');
+            break;
+          }
+          case 'settlements': {
+            const res = await apiGetSettlements(tId);
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setSettlementsData(res);
+            }
+            updateTripCacheItem(tId, 'settlements', () => res);
+            markSectionLoadedInCache(tId, 'settlements');
+            break;
+          }
+          case 'expenses': {
+            const [expRes, budRes] = await Promise.all([
+              apiGetExpenses(tId),
+              safeFetch(apiGetBudget(tId), null)
+            ]);
+            const exps = expRes.expenses || [];
+            const remainingSpent = exps.reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setExpenses(exps);
+              setTripData((tPrev: any) => (tPrev ? { ...tPrev, totalSpent: remainingSpent } : tPrev));
+              if (budRes) setBudgetData(budRes);
+            }
+            updateTripCacheItem(tId, 'expenses', () => exps);
+            if (budRes) updateTripCacheItem(tId, 'budget', () => budRes);
+            break;
+          }
+          case 'members': {
+            const res = await apiGetTripDetails(tId);
+            if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
+              setTripData(res.trip);
+              setMembers(res.members || []);
+            }
+            updateTripCacheItem(tId, 'trip', () => res.trip);
+            updateTripCacheItem(tId, 'members', () => res.members || []);
+            break;
+          }
+        }
+      } catch (err) {
+        console.error(`[Workspace] Error refreshing section ${section} for trip ${tId}:`, err);
+      } finally {
+        inFlightSectionRef.current.delete(key);
+      }
+    };
+
+    inFlight = fetchWorker();
+    inFlightSectionRef.current.set(key, inFlight);
+    await inFlight;
+  };
+
+  // Load Active Trip Workspace Payload (Prioritizing Chat Feed & Header first, loading secondary data on demand / non-blockingly)
   const loadWorkspaceData = async (tId: string, isBackground = false) => {
     if (!tId) return;
     activeTripIdRef.current = tId;
@@ -297,7 +451,7 @@ export const App: React.FC = () => {
         setWorkspaceLoading(false);
         setWorkspaceError(null);
 
-        // If cached data is fresh (within TTL), skip redundant background fetch storm!
+        // If cached data is fresh (within 5-minute TTL), skip redundant background fetch storm!
         if (isTripCacheFresh(tId)) {
           console.log(`[TripCache] Fresh cache HIT for ${tId}, skipping redundant background re-fetch`);
           return;
@@ -328,29 +482,14 @@ export const App: React.FC = () => {
       console.log(`[TripCache] Background refresh ${tId}`);
     }
 
-    const safeFetch = async <T,>(promise: Promise<T>, fallback: T): Promise<T> => {
-      try {
-        return await promise;
-      } catch {
-        return fallback;
-      }
-    };
-
-    // Parallel fetch worker for all 10 workspace endpoints
-    const executeFetch = async () => {
-      const [detailsRes, expRes, budRes, itinRes, bookRes, setRes, taskRes, pollRes, docRes, actRes] =
-        await Promise.all([
-          apiGetTripDetails(tId),
-          safeFetch(apiGetExpenses(tId), { expenses: [] }),
-          safeFetch(apiGetBudget(tId), null),
-          safeFetch(apiGetItinerary(tId), { items: [] }),
-          safeFetch(apiGetBookings(tId), { bookings: [] }),
-          safeFetch(apiGetSettlements(tId), null),
-          safeFetch(apiGetTasks(tId), { tasks: [] }),
-          safeFetch(apiGetPolls(tId), { polls: [] }),
-          safeFetch(apiGetDocuments(tId), { documents: [] }),
-          safeFetch(apiGetActivity(tId), { activities: [] }),
-        ]);
+    // PRIORITY 1: Core Chat & Header data (4 focused requests only!)
+    const executePriorityFetch = async () => {
+      const [detailsRes, actRes, expRes, budRes] = await Promise.all([
+        apiGetTripDetails(tId),
+        safeFetch(apiGetActivity(tId), { activities: [] }),
+        safeFetch(apiGetExpenses(tId), { expenses: [] }),
+        safeFetch(apiGetBudget(tId), null),
+      ]);
 
       const fetchedActivities = (actRes.activities || []).filter(
         (a: any) => !a.tripId || String(a.tripId?._id || a.tripId) === tId
@@ -361,12 +500,6 @@ export const App: React.FC = () => {
         members: detailsRes.members || [],
         expenses: expRes.expenses || [],
         budget: budRes || null,
-        itinerary: itinRes.items || [],
-        bookings: bookRes.bookings || [],
-        settlements: setRes || null,
-        tasks: taskRes.tasks || [],
-        polls: pollRes.polls || [],
-        documents: docRes.documents || [],
         activities: fetchedActivities,
       };
     };
@@ -375,13 +508,14 @@ export const App: React.FC = () => {
       // In-flight request deduplication: reuse running request if active
       let fetchPromise = inFlightLoadsRef.current.get(tId);
       if (!fetchPromise) {
-        fetchPromise = executeFetch();
+        fetchPromise = executePriorityFetch();
         inFlightLoadsRef.current.set(tId, fetchPromise);
       }
 
-      const workspacePayload = await fetchPromise;
+      const priorityPayload = await fetchPromise;
 
-      setTripCache(tId, workspacePayload);
+      // Update cache immediately with priority data
+      setTripCache(tId, priorityPayload);
 
       // Race-Condition Guard: If user switched away to another trip, discard this stale response!
       if (activeTripIdRef.current !== tId || currentSeq !== loadSeqRef.current) {
@@ -389,17 +523,11 @@ export const App: React.FC = () => {
         return;
       }
 
-      // Apply fresh data to React state
-      setTripData(workspacePayload.trip);
-      setMembers(workspacePayload.members);
-      setExpenses(workspacePayload.expenses);
-      setBudgetData(workspacePayload.budget);
-      setItinerary(workspacePayload.itinerary);
-      setBookings(workspacePayload.bookings);
-      setSettlementsData(workspacePayload.settlements);
-      setTasks(workspacePayload.tasks);
-      setPolls(workspacePayload.polls);
-      setDocuments(workspacePayload.documents);
+      // Apply priority chat and header data to React state
+      setTripData(priorityPayload.trip);
+      setMembers(priorityPayload.members);
+      setExpenses(priorityPayload.expenses);
+      setBudgetData(priorityPayload.budget);
       setWorkspaceLoading(false);
       setWorkspaceError(null);
 
@@ -408,8 +536,72 @@ export const App: React.FC = () => {
         const pendingForThisTrip = prev.filter(
           (a) => a.isPending && (!a.tripId || String(a.tripId?._id || a.tripId) === tId)
         );
-        return mergeActivities(workspacePayload.activities, pendingForThisTrip, tId);
+        return mergeActivities(priorityPayload.activities, pendingForThisTrip, tId);
       });
+
+      // NON-BLOCKING SECONDARY PRELOAD: Load secondary data (without heavy settlements) in background
+      const itinVer = getSectionVersion(tId, 'itinerary');
+      const bookVer = getSectionVersion(tId, 'bookings');
+      const taskVer = getSectionVersion(tId, 'tasks');
+      const pollVer = getSectionVersion(tId, 'polls');
+      const docVer = getSectionVersion(tId, 'documents');
+
+      (async () => {
+        try {
+          const [itinRes, bookRes, taskRes, pollRes, docRes] = await Promise.all([
+            safeFetch(apiGetItinerary(tId), { items: [] }),
+            safeFetch(apiGetBookings(tId), { bookings: [] }),
+            safeFetch(apiGetTasks(tId), { tasks: [] }),
+            safeFetch(apiGetPolls(tId), { polls: [] }),
+            safeFetch(apiGetDocuments(tId), { documents: [] }),
+          ]);
+
+          // Strict Sequencing & Trip Isolation Guard: Discard if user switched away or initiated a newer load
+          if (activeTripIdRef.current !== tId || currentSeq !== loadSeqRef.current) {
+            console.log(`[Workspace] Discarded stale secondary preload for ${tId}. Active is ${activeTripIdRef.current}`);
+            return;
+          }
+
+          const canApplyItin = getSectionVersion(tId, 'itinerary') === itinVer;
+          const canApplyBook = getSectionVersion(tId, 'bookings') === bookVer;
+          const canApplyTask = getSectionVersion(tId, 'tasks') === taskVer;
+          const canApplyPoll = getSectionVersion(tId, 'polls') === pollVer;
+          const canApplyDoc = getSectionVersion(tId, 'documents') === docVer;
+
+          const secondaryData: any = { loadedSections: {} };
+
+          if (canApplyItin) {
+            secondaryData.itinerary = itinRes.items || [];
+            secondaryData.loadedSections.itinerary = true;
+            setItinerary(secondaryData.itinerary);
+          }
+          if (canApplyBook) {
+            secondaryData.bookings = bookRes.bookings || [];
+            secondaryData.loadedSections.bookings = true;
+            setBookings(secondaryData.bookings);
+          }
+          if (canApplyTask) {
+            secondaryData.tasks = taskRes.tasks || [];
+            secondaryData.loadedSections.tasks = true;
+            setTasks(secondaryData.tasks);
+          }
+          if (canApplyPoll) {
+            secondaryData.polls = pollRes.polls || [];
+            secondaryData.loadedSections.polls = true;
+            setPolls(secondaryData.polls);
+          }
+          if (canApplyDoc) {
+            secondaryData.documents = docRes.documents || [];
+            secondaryData.loadedSections.documents = true;
+            setDocuments(secondaryData.documents);
+          }
+
+          setTripCache(tId, secondaryData);
+        } catch (secErr) {
+          console.warn('[Workspace] Background secondary preload notice:', secErr);
+        }
+      })();
+
     } catch (err: any) {
       if (activeTripIdRef.current === tId && currentSeq === loadSeqRef.current) {
         console.error('[Workspace] Error loading workspace data:', err);
@@ -469,24 +661,273 @@ export const App: React.FC = () => {
         }
       };
 
-      const handleWorkspaceSync = () => {
-        // Non-blocking background sync for active workspace
+      const handleMemberSync = () => {
         if (activeTripIdRef.current) {
-          loadWorkspaceData(activeTripIdRef.current, true);
+          invalidateSectionInCache(activeTripIdRef.current, 'settlements');
+          refreshSection(activeTripIdRef.current, 'members');
+          if (activeSectionRef.current === 'settlements') {
+            refreshSection(activeTripIdRef.current, 'settlements');
+          }
         }
       };
 
-      const handleExpenseSyncWithInvalidation = (payload?: any) => {
-        const targetTripId = String(payload?.tripId?._id || payload?.tripId || activeTripIdRef.current || '');
+      const handleItineraryCreated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'itinerary');
+          setItinerary((prev) => (prev.some((it) => String(it._id) === String(payload._id)) ? prev : [...prev, payload]));
+          updateTripCacheItem(activeId, 'itinerary', (prev = []) =>
+            prev.some((it: any) => String(it._id) === String(payload._id)) ? prev : [...prev, payload]
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'itinerary');
+        }
+      };
+
+      const handleItineraryUpdated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'itinerary');
+          setItinerary((prev) => prev.map((it) => (String(it._id) === String(payload._id) ? payload : it)));
+          updateTripCacheItem(activeId, 'itinerary', (prev = []) =>
+            prev.map((it: any) => (String(it._id) === String(payload._id)) ? payload : it)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'itinerary');
+        }
+      };
+
+      const handleItineraryDeleted = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        const delItemId = String(payload?.itemId || payload?._id || '').trim();
+        if (activeId && delItemId) {
+          bumpSectionVersion(activeId, 'itinerary');
+          setItinerary((prev) => prev.filter((it) => String(it._id) !== delItemId));
+          updateTripCacheItem(activeId, 'itinerary', (prev = []) =>
+            prev.filter((it: any) => String(it._id) !== delItemId)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'itinerary');
+        }
+      };
+
+      const handleBookingCreated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'bookings');
+          setBookings((prev) => (prev.some((b) => String(b._id) === String(payload._id)) ? prev : [...prev, payload]));
+          updateTripCacheItem(activeId, 'bookings', (prev = []) =>
+            prev.some((b: any) => String(b._id) === String(payload._id)) ? prev : [...prev, payload]
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'bookings');
+        }
+      };
+
+      const handleBookingUpdated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'bookings');
+          setBookings((prev) => prev.map((b) => (String(b._id) === String(payload._id)) ? payload : b));
+          updateTripCacheItem(activeId, 'bookings', (prev = []) =>
+            prev.map((b: any) => (String(b._id) === String(payload._id)) ? payload : b)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'bookings');
+        }
+      };
+
+      const handleBookingDeleted = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        const delBookingId = String(payload?.bookingId || payload?._id || '').trim();
+        if (activeId && delBookingId) {
+          bumpSectionVersion(activeId, 'bookings');
+          setBookings((prev) => prev.filter((b) => String(b._id) !== delBookingId));
+          updateTripCacheItem(activeId, 'bookings', (prev = []) =>
+            prev.filter((b: any) => String(b._id) !== delBookingId)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'bookings');
+        }
+      };
+
+      const handleTaskCreated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'tasks');
+          setTasks((prev) => (prev.some((t) => String(t._id) === String(payload._id)) ? prev : [payload, ...prev]));
+          updateTripCacheItem(activeId, 'tasks', (prev = []) =>
+            prev.some((t: any) => String(t._id) === String(payload._id)) ? prev : [payload, ...prev]
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'tasks');
+        }
+      };
+
+      const handleTaskUpdated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'tasks');
+          setTasks((prev) => prev.map((t) => (String(t._id) === String(payload._id)) ? payload : t));
+          updateTripCacheItem(activeId, 'tasks', (prev = []) =>
+            prev.map((t: any) => (String(t._id) === String(payload._id)) ? payload : t)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'tasks');
+        }
+      };
+
+      const handleTaskDeleted = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        const delTaskId = String(payload?.taskId || payload?._id || '').trim();
+        if (activeId && delTaskId) {
+          bumpSectionVersion(activeId, 'tasks');
+          setTasks((prev) => prev.filter((t) => String(t._id) !== delTaskId));
+          updateTripCacheItem(activeId, 'tasks', (prev = []) =>
+            prev.filter((t: any) => String(t._id) !== delTaskId)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'tasks');
+        }
+      };
+
+      const handlePollCreated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'polls');
+          setPolls((prev) => (prev.some((p) => String(p._id) === String(payload._id)) ? prev : [payload, ...prev]));
+          updateTripCacheItem(activeId, 'polls', (prev = []) =>
+            prev.some((p: any) => String(p._id) === String(payload._id)) ? prev : [payload, ...prev]
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'polls');
+        }
+      };
+
+      const handlePollVoted = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId) {
+          bumpSectionVersion(activeId, 'polls');
+          refreshSection(activeId, 'polls');
+        }
+      };
+
+      const handleDocumentCreated = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        if (activeId && payload && payload._id) {
+          bumpSectionVersion(activeId, 'documents');
+          setDocuments((prev) => (prev.some((d) => String(d._id) === String(payload._id)) ? prev : [payload, ...prev]));
+          updateTripCacheItem(activeId, 'documents', (prev = []) =>
+            prev.some((d: any) => String(d._id) === String(payload._id)) ? prev : [payload, ...prev]
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'documents');
+        }
+      };
+
+      const handleDocumentDeleted = (payload: any) => {
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || '').trim();
+        const activeId = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeId && targetTripId !== activeId) return;
+
+        const delDocId = String(payload?.documentId || payload?._id || '').trim();
+        if (activeId && delDocId) {
+          bumpSectionVersion(activeId, 'documents');
+          setDocuments((prev) => prev.filter((d) => String(d._id) !== delDocId));
+          updateTripCacheItem(activeId, 'documents', (prev = []) =>
+            prev.filter((d: any) => String(d._id) !== delDocId)
+          );
+        } else if (activeId) {
+          refreshSection(activeId, 'documents');
+        }
+      };
+
+      const handleSettlementSync = () => {
+        if (activeTripIdRef.current) {
+          invalidateTripReportCache(activeTripIdRef.current);
+          invalidateSectionInCache(activeTripIdRef.current, 'settlements');
+          if (activeSectionRef.current === 'settlements') {
+            refreshSection(activeTripIdRef.current, 'settlements');
+          }
+        }
+      };
+
+      const handleExpenseCreated = (payload?: any) => {
+        const exp = payload?.expense || payload;
+        const targetTripId = String(payload?.tripId?._id || payload?.tripId || exp?.tripId?._id || exp?.tripId || activeTripIdRef.current || '').trim();
         if (targetTripId) {
           invalidateTripReportCache(targetTripId);
+          invalidateSectionInCache(targetTripId, 'settlements');
         }
-        handleWorkspaceSync();
+        const activeIdNormalized = String(activeTripIdRef.current || '').trim();
+        if (targetTripId && activeIdNormalized && targetTripId === activeIdNormalized && exp && exp._id) {
+          setExpenses((prev) => {
+            if (prev.some((e) => String(e._id) === String(exp._id))) return prev;
+            const nextExpenses = [exp, ...prev];
+            const newTotalSpent = nextExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+            setTripData((tPrev: any) => (tPrev ? { ...tPrev, totalSpent: newTotalSpent } : tPrev));
+            setBudgetData((bPrev: any) =>
+              bPrev ? { ...bPrev, totalSpent: newTotalSpent, spent: newTotalSpent } : bPrev
+            );
+            return nextExpenses;
+          });
+          updateTripCacheItem(activeIdNormalized, 'expenses', (prev = []) => {
+            if (prev.some((e: any) => String(e._id) === String(exp._id))) return prev;
+            return [exp, ...prev];
+          });
+          const cached = getTripCache(activeIdNormalized);
+          if (cached) cached.settlements = null;
+          invalidateSectionInCache(activeIdNormalized, 'settlements');
+          if (activeSectionRef.current === 'settlements') {
+            refreshSection(activeIdNormalized, 'settlements');
+          }
+        } else if (activeIdNormalized) {
+          refreshSection(activeIdNormalized, 'expenses');
+          if (activeSectionRef.current === 'settlements') {
+            refreshSection(activeIdNormalized, 'settlements');
+          }
+        }
       };
 
       const handleExpenseUpdated = (updatedExpense: any) => {
         if (!updatedExpense || !updatedExpense._id) {
-          handleExpenseSyncWithInvalidation();
+          handleExpenseCreated();
           return;
         }
         const expIdStr = String(updatedExpense._id);
@@ -495,8 +936,10 @@ export const App: React.FC = () => {
 
         if (expTripId) {
           invalidateTripReportCache(expTripId);
+          invalidateSectionInCache(expTripId, 'settlements');
         } else if (activeIdNormalized) {
           invalidateTripReportCache(activeIdNormalized);
+          invalidateSectionInCache(activeIdNormalized, 'settlements');
         }
 
         if (expTripId && activeIdNormalized && expTripId !== activeIdNormalized) {
@@ -504,16 +947,31 @@ export const App: React.FC = () => {
           return;
         }
 
-        // 1. Immediately update expenses state in place by matching expense ID
-        setExpenses((prev) =>
-          prev.map((exp) => (String(exp._id) === expIdStr ? updatedExpense : exp))
-        );
+        // 1. Immediately update expenses state in place by matching expense ID and recalculate totalSpent
+        setExpenses((prev) => {
+          const next = prev.map((exp) => (String(exp._id) === expIdStr ? updatedExpense : exp));
+          const newTotalSpent = next.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+          setTripData((tPrev: any) => (tPrev ? { ...tPrev, totalSpent: newTotalSpent } : tPrev));
+          setBudgetData((bPrev: any) =>
+            bPrev ? { ...bPrev, totalSpent: newTotalSpent, spent: newTotalSpent } : bPrev
+          );
+          return next;
+        });
 
         // 2. Immediately update in-memory trip cache
         if (activeIdNormalized) {
           updateTripCacheItem(activeIdNormalized, 'expenses', (prev = []) =>
             prev.map((exp: any) => (String(exp._id) === expIdStr ? updatedExpense : exp))
           );
+          const cached = getTripCache(activeIdNormalized);
+          if (cached) {
+            const cachedExpenses = cached.expenses || [];
+            const newTotal = cachedExpenses.reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
+            if (cached.trip) cached.trip = { ...cached.trip, totalSpent: newTotal };
+            if (cached.budget) cached.budget = { ...cached.budget, totalSpent: newTotal, spent: newTotal };
+            cached.settlements = null;
+          }
+          invalidateSectionInCache(activeIdNormalized, 'settlements');
         }
 
         // 3. Immediately update any activity referencing this expense in activities state
@@ -552,8 +1010,10 @@ export const App: React.FC = () => {
           );
         }
 
-        // 5. Non-blocking sync for settlements and dependent calculations
-        handleWorkspaceSync();
+        // 5. If user is in settlements tab, sync settlements
+        if (activeSectionRef.current === 'settlements' && activeIdNormalized) {
+          refreshSection(activeIdNormalized, 'settlements');
+        }
       };
 
       const handleExpenseDeleted = (payload: any) => {
@@ -561,15 +1021,17 @@ export const App: React.FC = () => {
         const deletedExpId = String(payload?.expenseId || payload?._id || '').trim();
 
         if (!deletedExpId) {
-          handleExpenseSyncWithInvalidation(payload);
+          handleExpenseCreated(payload);
           return;
         }
 
         // 1. Immediately purge from cache for target trip and invalidate report
         if (targetTripId) {
           removeExpenseFromTripCache(targetTripId, deletedExpId);
+          invalidateSectionInCache(targetTripId, 'settlements');
         } else if (activeTripIdRef.current) {
           removeExpenseFromTripCache(activeTripIdRef.current, deletedExpId);
+          invalidateSectionInCache(activeTripIdRef.current, 'settlements');
         }
 
         const activeIdNormalized = String(activeTripIdRef.current || '').trim();
@@ -602,8 +1064,10 @@ export const App: React.FC = () => {
           prev && String(prev._id) === deletedExpId ? null : prev
         );
 
-        // 5. Non-blocking sync for settlements and dependent calculations
-        handleWorkspaceSync();
+        // 5. If user is in settlements tab, sync settlements
+        if (activeSectionRef.current === 'settlements' && activeIdNormalized) {
+          refreshSection(activeIdNormalized, 'settlements');
+        }
       };
 
       const handleTripUpdated = (updatedTrip: any) => {
@@ -623,44 +1087,74 @@ export const App: React.FC = () => {
               prev.map((t) => (String(t._id) === String(payload.tripId) ? { ...t, ...payload.trip } : t))
             );
           }
-          handleWorkspaceSync();
+          invalidateSectionInCache(activeTripIdRef.current, 'settlements');
+          if (activeSectionRef.current === 'settlements' && activeTripIdRef.current) {
+            refreshSection(activeTripIdRef.current, 'settlements');
+          }
         }
       };
 
       socket.on('activity.created', handleActivityCreated);
-      socket.on('expense.created', handleExpenseSyncWithInvalidation);
+      socket.on('expense.created', handleExpenseCreated);
       socket.on('expense.updated', handleExpenseUpdated);
       socket.on('expense.deleted', handleExpenseDeleted);
-      socket.on('member.joined', handleWorkspaceSync);
-      socket.on('member.removed', handleWorkspaceSync);
-      socket.on('itinerary.created', handleWorkspaceSync);
-      socket.on('itinerary.updated', handleWorkspaceSync);
-      socket.on('booking.created', handleWorkspaceSync);
-      socket.on('task.updated', handleWorkspaceSync);
-      socket.on('poll.voted', handleWorkspaceSync);
-      socket.on('settlement.updated', handleExpenseSyncWithInvalidation);
+      socket.on('member.joined', handleMemberSync);
+      socket.on('member.removed', handleMemberSync);
+      socket.on('itinerary.created', handleItineraryCreated);
+      socket.on('itinerary.updated', handleItineraryUpdated);
+      socket.on('itinerary.deleted', handleItineraryDeleted);
+      socket.on('booking.created', handleBookingCreated);
+      socket.on('booking.updated', handleBookingUpdated);
+      socket.on('booking.deleted', handleBookingDeleted);
+      socket.on('task.created', handleTaskCreated);
+      socket.on('task.updated', handleTaskUpdated);
+      socket.on('task.deleted', handleTaskDeleted);
+      socket.on('poll.created', handlePollCreated);
+      socket.on('poll.voted', handlePollVoted);
+      socket.on('document.created', handleDocumentCreated);
+      socket.on('document.deleted', handleDocumentDeleted);
+      socket.on('settlement.updated', handleSettlementSync);
       socket.on('trip.updated', handleTripUpdated);
       socket.on('trip.lifecycle', handleTripLifecycle);
 
       return () => {
         leaveTripRoom(activeTripId);
         socket.off('activity.created', handleActivityCreated);
-        socket.off('expense.created', handleExpenseSyncWithInvalidation);
+        socket.off('expense.created', handleExpenseCreated);
         socket.off('expense.updated', handleExpenseUpdated);
         socket.off('expense.deleted', handleExpenseDeleted);
-        socket.off('member.joined', handleWorkspaceSync);
-        socket.off('member.removed', handleWorkspaceSync);
-        socket.off('itinerary.created', handleWorkspaceSync);
-        socket.off('itinerary.updated', handleWorkspaceSync);
-        socket.off('booking.created', handleWorkspaceSync);
-        socket.off('task.updated', handleWorkspaceSync);
-        socket.off('poll.voted', handleWorkspaceSync);
-        socket.off('settlement.updated', handleExpenseSyncWithInvalidation);
+        socket.off('member.joined', handleMemberSync);
+        socket.off('member.removed', handleMemberSync);
+        socket.off('itinerary.created', handleItineraryCreated);
+        socket.off('itinerary.updated', handleItineraryUpdated);
+        socket.off('itinerary.deleted', handleItineraryDeleted);
+        socket.off('booking.created', handleBookingCreated);
+        socket.off('booking.updated', handleBookingUpdated);
+        socket.off('booking.deleted', handleBookingDeleted);
+        socket.off('task.created', handleTaskCreated);
+        socket.off('task.updated', handleTaskUpdated);
+        socket.off('task.deleted', handleTaskDeleted);
+        socket.off('poll.created', handlePollCreated);
+        socket.off('poll.voted', handlePollVoted);
+        socket.off('document.created', handleDocumentCreated);
+        socket.off('document.deleted', handleDocumentDeleted);
+        socket.off('settlement.updated', handleSettlementSync);
         socket.off('trip.updated', handleTripUpdated);
         socket.off('trip.lifecycle', handleTripLifecycle);
       };
     }
   }, [activeTripId]);
+
+  // On-demand secondary section loader: fetches data when user opens a secondary section tab if not yet loaded
+  useEffect(() => {
+    if (!activeTripId) return;
+    const secondarySections = ['itinerary', 'bookings', 'settlements', 'tasks', 'polls', 'documents'];
+    if (secondarySections.includes(activeSection)) {
+      if (!isSectionLoadedInCache(activeTripId, activeSection)) {
+        refreshSection(activeTripId, activeSection);
+      }
+    }
+  }, [activeTripId, activeSection]);
 
   const handleLogout = () => {
     removeAuthToken();
@@ -748,8 +1242,9 @@ export const App: React.FC = () => {
   const handleVotePoll = async (pollId: string, optionId: string) => {
     if (!activeTripId) return;
     try {
+      bumpSectionVersion(activeTripId, 'polls');
       await apiVotePoll(activeTripId, pollId, optionId);
-      await loadWorkspaceData(activeTripId);
+      await refreshSection(activeTripId, 'polls');
     } catch (err: any) {
       console.error('Failed to vote on poll:', err);
     }
@@ -759,25 +1254,37 @@ export const App: React.FC = () => {
     if (!activeTripId) return;
     try {
       const nextStatus = currentStatus === 'DONE' ? 'TODO' : 'DONE';
+      bumpSectionVersion(activeTripId, 'tasks');
+      // Optimistic update
+      setTasks((prev) => prev.map((t) => (t._id === taskId ? { ...t, status: nextStatus } : t)));
+      updateTripCacheItem(activeTripId, 'tasks', (prev = []) =>
+        prev.map((t: any) => (t._id === taskId ? { ...t, status: nextStatus } : t))
+      );
       await apiUpdateTask(activeTripId, taskId, { status: nextStatus });
-      await loadWorkspaceData(activeTripId);
     } catch (err: any) {
       console.error('Failed to update task status:', err);
+      refreshSection(activeTripId, 'tasks', true);
     }
   };
 
   const handleUploadPhoto = async (file: File) => {
     if (!activeTripId) return;
     try {
+      bumpSectionVersion(activeTripId, 'documents');
       const uploaded = await apiUploadFile(file, 'chat');
       if (uploaded?.secureUrl || uploaded?.url) {
-        await apiCreateDocument(activeTripId, {
+        const docRes = await apiCreateDocument(activeTripId, {
           name: uploaded.originalName || file.name,
           type: 'PHOTO',
           fileUrl: uploaded.secureUrl || uploaded.url,
           fileSize: uploaded.bytes ? `${Math.round(uploaded.bytes / 1024)} KB` : `${Math.round(file.size / 1024)} KB`
         });
-        await loadWorkspaceData(activeTripId);
+        if (docRes?.document) {
+          setDocuments((prev) => [docRes.document, ...prev]);
+          updateTripCacheItem(activeTripId, 'documents', (prev = []) => [docRes.document, ...prev]);
+        } else {
+          refreshSection(activeTripId, 'documents');
+        }
       }
     } catch (err) {
       console.error('Failed to upload photo:', err);
@@ -793,8 +1300,9 @@ export const App: React.FC = () => {
     const previousBudgetData = budgetData;
 
     try {
-      // 1. Immediately purge from in-memory cache and invalidate report cache
+      // 1. Immediately purge from in-memory cache and invalidate report cache & settlements
       removeExpenseFromTripCache(activeTripId, expIdStr);
+      invalidateSectionInCache(activeTripId, 'settlements');
 
       // 2. Optimistic UI update: Remove from expenses list immediately
       const remainingExpenses = expenses.filter((e) => String(e._id) !== expIdStr);
@@ -821,8 +1329,11 @@ export const App: React.FC = () => {
       // 6. Delete on backend
       await apiDeleteExpense(activeTripId, expIdStr);
 
-      // 7. Background revalidate with authoritative calculation
-      loadWorkspaceData(activeTripId, true);
+      // 7. Refresh expenses and settlements if active
+      refreshSection(activeTripId, 'expenses');
+      if (activeSectionRef.current === 'settlements') {
+        refreshSection(activeTripId, 'settlements');
+      }
     } catch (err: any) {
       console.error('[Expense] Error deleting expense:', err);
       // Rollback optimistic state if backend deletion failed
@@ -831,7 +1342,7 @@ export const App: React.FC = () => {
       setTripData(previousTripData);
       setBudgetData(previousBudgetData);
       alert(err.message || 'Failed to delete expense. Please try again.');
-      loadWorkspaceData(activeTripId, false);
+      refreshSection(activeTripId, 'expenses', true);
     }
   };
 
@@ -1016,6 +1527,7 @@ export const App: React.FC = () => {
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
                       <ActivityFeed
                         key={`feed-${activeTripId}`}
+                        isLoading={workspaceLoading}
                         tripId={activeTripId}
                         activities={activities}
                         expenses={expenses}
@@ -1058,7 +1570,7 @@ export const App: React.FC = () => {
                         members={members}
                         currentUser={user}
                         onRefresh={() => {
-                          loadWorkspaceData(activeTripId);
+                          refreshSection(activeTripId, 'expenses', true);
                         }}
                         onDeleteExpense={handleDeleteExpense}
                       />
@@ -1070,7 +1582,7 @@ export const App: React.FC = () => {
                       <SettlementSheet
                         tripId={activeTripId}
                         settlementsData={settlementsData}
-                        onRefresh={() => loadWorkspaceData(activeTripId)}
+                        onRefresh={() => refreshSection(activeTripId, 'settlements', true)}
                       />
                     </div>
                   )}
@@ -1082,7 +1594,7 @@ export const App: React.FC = () => {
                         items={itinerary}
                         members={members}
                         onRefresh={() => {
-                          loadWorkspaceData(activeTripId);
+                          refreshSection(activeTripId, 'itinerary', true);
                         }}
                       />
                     </div>
@@ -1094,7 +1606,7 @@ export const App: React.FC = () => {
                         tripId={activeTripId}
                         bookings={bookings}
                         onRefresh={() => {
-                          loadWorkspaceData(activeTripId);
+                          refreshSection(activeTripId, 'bookings', true);
                         }}
                       />
                     </div>
@@ -1105,7 +1617,7 @@ export const App: React.FC = () => {
                       <BudgetView
                         tripId={activeTripId}
                         budgetData={budgetData}
-                        onRefresh={() => loadWorkspaceData(activeTripId)}
+                        onRefresh={() => refreshSection(activeTripId, 'expenses', true)}
                       />
                     </div>
                   )}
@@ -1117,7 +1629,7 @@ export const App: React.FC = () => {
                         tasks={tasks}
                         members={members}
                         onRefresh={() => {
-                          loadWorkspaceData(activeTripId);
+                          refreshSection(activeTripId, 'tasks', true);
                         }}
                       />
                     </div>
@@ -1130,7 +1642,7 @@ export const App: React.FC = () => {
                         polls={polls}
                         currentUser={user}
                         onRefresh={() => {
-                          loadWorkspaceData(activeTripId);
+                          refreshSection(activeTripId, 'polls', true);
                         }}
                       />
                     </div>
@@ -1142,7 +1654,7 @@ export const App: React.FC = () => {
                         tripId={activeTripId}
                         documents={documents}
                         onRefresh={() => {
-                          loadWorkspaceData(activeTripId);
+                          refreshSection(activeTripId, 'documents', true);
                         }}
                       />
                     </div>
@@ -1228,8 +1740,14 @@ export const App: React.FC = () => {
             currentUser={user}
             expenseToEdit={expenseToEdit}
             onSuccess={() => {
-              if (activeTripId) invalidateTripReportCache(activeTripId);
-              loadWorkspaceData(activeTripId);
+              if (activeTripId) {
+                invalidateTripReportCache(activeTripId);
+                invalidateSectionInCache(activeTripId, 'settlements');
+                refreshSection(activeTripId, 'expenses');
+                if (activeSectionRef.current === 'settlements') {
+                  refreshSection(activeTripId, 'settlements');
+                }
+              }
             }}
           />
 
@@ -1242,7 +1760,10 @@ export const App: React.FC = () => {
               userShare={paySplitInfo.userShare}
               payerName={paySplitInfo.payerName}
               onSuccess={(updatedExpense?: any) => {
-                if (activeTripId) invalidateTripReportCache(activeTripId);
+                if (activeTripId) {
+                  invalidateTripReportCache(activeTripId);
+                  invalidateSectionInCache(activeTripId, 'settlements');
+                }
                 if (updatedExpense) {
                   // In-place update of existing card immediately
                   setExpenses((prev) =>
@@ -1264,7 +1785,9 @@ export const App: React.FC = () => {
                     })
                   );
                 }
-                loadWorkspaceData(activeTripId, true);
+                if (activeSectionRef.current === 'settlements') {
+                  refreshSection(activeTripId, 'settlements');
+                }
               }}
             />
           )}
