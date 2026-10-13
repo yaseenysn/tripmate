@@ -1,5 +1,6 @@
 import React from 'react';
 import { Bell, X, Check, Info } from 'lucide-react';
+import { format12HourTime } from '../utils/timeFormat';
 
 interface NotificationsModalProps {
   notifications: any[];
@@ -48,7 +49,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                 <div className="flex items-center justify-between font-bold">
                   <span>{n.title}</span>
                   <span className="text-[10px] text-slate-500">
-                    {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {format12HourTime(n.createdAt)}
                   </span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-300">{n.message}</p>

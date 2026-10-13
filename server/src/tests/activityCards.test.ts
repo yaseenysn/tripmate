@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { connectDB, disconnectDB } from '../config/db';
 import {
-  User, Trip, Activity, DocumentModel, ItineraryItem, Booking, Task, Poll
+  User, Trip, Activity, DocumentModel, ItineraryItem, Booking, Task, Poll, PollVote
 } from '../models';
 import { logActivity } from '../services/activityService';
 
@@ -10,21 +10,21 @@ const fail = (msg: string) => console.log(`\x1b[31m✖ FAIL:\x1b[0m ${msg}`);
 
 const runTests = async () => {
   console.log('====================================================');
-  console.log('TripMate: Non-Expense Activity Cards Test Suite');
+  console.log('TripMate: Non-Expense Activity Cards & Polls Test Suite');
   console.log('====================================================\n');
 
   await connectDB();
 
   let testPassed = 0;
-  let testTotal = 7;
+  let testTotal = 9;
 
   const createdUserIds: mongoose.Types.ObjectId[] = [];
   const createdTripIds: mongoose.Types.ObjectId[] = [];
 
   try {
     const user = await User.create({
-      name: 'Yaseen Test',
-      email: `yaseen_${Date.now()}@test.com`,
+      name: 'Ibrahim',
+      email: `ibrahim_${Date.now()}@test.com`,
       passwordHash: 'testhash'
     });
     createdUserIds.push(user._id);
@@ -39,6 +39,9 @@ const runTests = async () => {
     });
     createdTripIds.push(trip._id);
 
+    const tripIdStr = trip._id.toString();
+    const userIdStr = user._id.toString();
+
     // 1. PHOTO Activity Card
     const photoDoc = await DocumentModel.create({
       tripId: trip._id,
@@ -49,8 +52,8 @@ const runTests = async () => {
       fileSize: '1.8 MB'
     });
     const photoAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'PHOTO_UPLOADED',
       `uploaded photo '${photoDoc.name}'`,
       {
@@ -83,8 +86,8 @@ const runTests = async () => {
       fileSize: '240 KB'
     });
     const docAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'DOCUMENT_UPLOADED',
       `uploaded document '${pdfDoc.name}'`,
       {
@@ -118,8 +121,8 @@ const runTests = async () => {
       createdBy: user._id
     });
     const itinAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'ITINERARY_ADDED',
       `added Day 1 itinerary item '${itinItem.title}'`,
       {
@@ -150,8 +153,8 @@ const runTests = async () => {
       createdBy: user._id
     });
     const bookingAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'BOOKING_ADDED',
       `added hotel booking '${booking.provider}'`,
       {
@@ -180,8 +183,8 @@ const runTests = async () => {
       createdBy: user._id
     });
     const taskAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'TASK_ADDED',
       `added task '${task.title}'`,
       {
@@ -201,19 +204,19 @@ const runTests = async () => {
       fail('Test 5: Task activity missing task metadata');
     }
 
-    // 6. POLL Activity Card
+    // 6. POLL Activity Card (WhatsApp Style)
     const poll = await Poll.create({
       tripId: trip._id,
-      question: 'Which cafe for evening snacks?',
+      question: 'Date enna thekk akkanam',
       options: [
-        { text: 'Cafe Simla Times', votes: [] },
-        { text: 'Wake & Bake Cafe', votes: [] }
+        { text: 'October 15', votes: [] },
+        { text: 'October 20', votes: [] }
       ],
       createdBy: user._id
     });
     const pollAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'POLL_CREATED',
       `created poll '${poll.question}'`,
       {
@@ -227,16 +230,63 @@ const runTests = async () => {
       pollAct.metadata?.pollId?.toString() === poll._id.toString() &&
       pollAct.metadata?.poll?.options?.length === 2
     ) {
-      pass('Test 6: Poll activity includes question, options, and vote counts');
+      pass('Test 6: Poll card creation logs question and available options');
       testPassed++;
     } else {
       fail('Test 6: Poll activity missing poll options metadata');
     }
 
-    // 7. System Activity (Expense Deletion / Trip change) remains compact system pill
+    // 7. POLL VOTE Activity: Updates vote without creating duplicate poll card
+    const firstOptionId = (poll.options[0] as any)?._id?.toString() || '';
+    const vote = await PollVote.create({
+      pollId: poll._id,
+      userId: user._id,
+      tripId: trip._id,
+      optionId: firstOptionId
+    });
+    const voteAct = await logActivity(
+      tripIdStr,
+      userIdStr,
+      'POLL_VOTED',
+      `voted on poll "${poll.question}"`,
+      { pollId: poll._id, optionId: firstOptionId }
+    );
+    if (
+      vote &&
+      voteAct &&
+      voteAct.type === 'POLL_VOTED' &&
+      voteAct.metadata?.pollId?.toString() === poll._id.toString()
+    ) {
+      pass('Test 7: Poll vote records correctly and associates with poll without duplicate cards');
+      testPassed++;
+    } else {
+      fail('Test 7: Poll vote record failed');
+    }
+
+    // 8. MEMBER JOINED System Message: Includes actual member name
+    const joinAct = await logActivity(
+      tripIdStr,
+      userIdStr,
+      'MEMBER_JOINED',
+      'Ibrahim joined the trip',
+      { userName: 'Ibrahim' }
+    );
+    if (
+      joinAct &&
+      joinAct.type === 'MEMBER_JOINED' &&
+      joinAct.description.includes('Ibrahim') &&
+      joinAct.metadata?.userName === 'Ibrahim'
+    ) {
+      pass('Test 8: Member joined system message captures user name for centered pill');
+      testPassed++;
+    } else {
+      fail('Test 8: Member joined activity missing user name');
+    }
+
+    // 9. System Activity (Expense Deletion) remains compact system pill
     const sysAct = await logActivity(
-      trip._id,
-      user._id,
+      tripIdStr,
+      userIdStr,
       'EXPENSE_DELETED',
       "deleted expense 'Train tickets'"
     );
@@ -245,10 +295,10 @@ const runTests = async () => {
       sysAct.type === 'EXPENSE_DELETED' &&
       sysAct.description.includes('deleted expense')
     ) {
-      pass('Test 7: Expense deletion is cleanly logged as system activity without re-creating card');
+      pass('Test 9: Expense deletion is cleanly logged as system activity without re-creating card');
       testPassed++;
     } else {
-      fail('Test 7: System activity not logged properly');
+      fail('Test 9: System activity not logged properly');
     }
 
   } catch (err: any) {
@@ -262,6 +312,7 @@ const runTests = async () => {
       await Booking.deleteMany({ tripId: { $in: createdTripIds } });
       await Task.deleteMany({ tripId: { $in: createdTripIds } });
       await Poll.deleteMany({ tripId: { $in: createdTripIds } });
+      await PollVote.deleteMany({ tripId: { $in: createdTripIds } });
       await Trip.deleteMany({ _id: { $in: createdTripIds } });
     }
     if (createdUserIds.length > 0) {

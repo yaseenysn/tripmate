@@ -324,7 +324,9 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
       tripId: trip._id.toString()
     });
 
-    await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `joined the trip via invite link`);
+    const joiningUser = await User.findById(userId).select('name');
+    const memberName = joiningUser?.name || 'A member';
+    await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `${memberName} joined the trip`, { userName: memberName });
     await createNotification(userId, 'Joined Trip', `You joined "${trip.name}"`, 'TRIP', trip._id.toString());
 
     res.status(201).json({ message: 'Successfully joined trip', tripId: trip._id });
@@ -387,7 +389,9 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
       tripId: trip._id.toString()
     });
 
-    await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `joined the trip using code ${cleanCode}`);
+    const joiningUserWithCode = await User.findById(userId).select('name');
+    const memberName = joiningUserWithCode?.name || 'A member';
+    await logActivity(trip._id.toString(), userId, 'MEMBER_JOINED', `${memberName} joined the trip`, { userName: memberName });
     await createNotification(userId, 'Joined Trip', `You joined "${trip.name}"`, 'TRIP', trip._id.toString());
 
     res.status(201).json({ message: 'Successfully joined trip', tripId: trip._id });

@@ -10,6 +10,7 @@ import {
 } from './TripActivityCards';
 import { ImagePreviewModal } from './ImagePreviewModal';
 import { Clock } from 'lucide-react';
+import { format12HourTime } from '../utils/timeFormat';
 
 interface ActivityFeedProps {
   activities: any[];
@@ -160,10 +161,33 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   const combinedStream: any[] = [];
   const processedKeys = new Set<string>();
 
-  // Add all activity records (excluding split payment activities to update existing card in place)
+  // Set of poll IDs that already have an explicit POLL_CREATED activity
+  const pollIdsWithCreatedActivity = new Set(
+    activities
+      .filter((a) => a.type === 'POLL_CREATED')
+      .map((a) => String(a.metadata?.pollId || a.metadata?.poll?._id || ''))
+      .filter(Boolean)
+  );
+  const pollIdsRepresentedInStream = new Set<string>();
+
+  // Add all activity records (excluding split payment and repeated vote activities to update cards in place)
   activities.forEach((act) => {
     if (act.type === 'EXPENSE_SPLIT_PAID') {
       return;
+    }
+    if (act.type === 'POLL_VOTED') {
+      const pId = String(act.metadata?.pollId || act.metadata?.poll?._id || '');
+      // If a POLL_CREATED activity already exists, suppress vote activity from creating separate feed items
+      if (pollIdsWithCreatedActivity.has(pId)) {
+        return;
+      }
+      // If historical activities only have POLL_VOTED, keep at most 1 representative entry to render the card
+      if (pId && pollIdsRepresentedInStream.has(pId)) {
+        return;
+      }
+      if (pId) {
+        pollIdsRepresentedInStream.add(pId);
+      }
     }
     if (tripId) {
       const actTripId = String(act.tripId?._id || act.tripId || '').trim();
@@ -205,6 +229,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
   const renderedBookingIds = new Set<string>();
   const renderedTaskIds = new Set<string>();
   const renderedPollIds = new Set<string>();
+  const renderedJoinUserIds = new Set<string>();
 
   const extractQuoted = (desc: string = ''): string => {
     const match = desc.match(/['"“]([^'"”]+)['"”]/);
@@ -259,7 +284,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
               const isSelf = currentUser && (senderId === currentUser._id || senderId === currentUser.id);
               const senderName = sender.name || 'Member';
               const nameColor = getMemberColor(senderName);
-              const timeStr = new Date(streamItem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const timeStr = format12HourTime(streamItem.timestamp);
 
               const actType = act.type || '';
               const isSystemMessage =
@@ -269,13 +294,31 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 actType === 'TRIP_UPDATED' ||
                 actType === 'EXPENSE_DELETED';
 
-              // System Message Bubble (e.g. "Bilal joined the trip" or "Yaseen deleted expense Dinner")
+              // System Message Bubble (e.g. "Ibrahim joined the trip · 10:29 PM")
               if (isSystemMessage) {
+                let systemText = act.description || '';
+                if (actType.includes('JOIN') || actType === 'MEMBER_JOINED') {
+                  const joinKey = String(senderId || act.userId?._id || act.userId || act.description);
+                  if (renderedJoinUserIds.has(joinKey)) {
+                    return null;
+                  }
+                  renderedJoinUserIds.add(joinKey);
+                  const memberName = act.userId?.name || act.metadata?.userName || (senderName !== 'Member' ? senderName : '') || 'A new member';
+                  systemText = `${memberName} joined the trip`;
+                } else if (actType.includes('LEAVE') || actType === 'MEMBER_LEFT') {
+                  const memberName = act.userId?.name || act.metadata?.userName || (senderName !== 'Member' ? senderName : '') || 'A member';
+                  systemText = `${memberName} left the trip`;
+                } else if (actType === 'MEMBER_REMOVED') {
+                  const memberName = act.metadata?.removedUserName || act.userId?.name || 'A member';
+                  systemText = `${memberName} was removed from the trip`;
+                }
+
                 return (
                   <div key={act._id || i} className="flex justify-center my-1.5">
-                    <div className="bg-[#182229]/90 border border-slate-800/80 px-3 py-1 rounded-lg text-[11px] text-slate-400 font-medium shadow-sm flex items-center gap-1.5">
-                      <span>{act.description}</span>
-                      <span className="text-[10px] text-slate-500">• {timeStr}</span>
+                    <div className="bg-[#182229]/90 border border-slate-800/80 px-3 py-1.5 rounded-lg text-[11px] text-slate-300 font-medium shadow-sm flex items-center gap-1.5 select-none">
+                      <span>{systemText}</span>
+                      <span className="text-slate-500 font-semibold">·</span>
+                      <span className="text-[10px] text-slate-400">{timeStr}</span>
                     </div>
                   </div>
                 );
@@ -458,12 +501,25 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 (taskIdStr && renderedTaskIds.has(taskIdStr)) ||
                 (pollIdStr && renderedPollIds.has(pollIdStr));
 
+              // Suppress poll vote activities from appending system pills to the chat
+              if (actType === 'POLL_VOTED') {
+                if (!renderedPollIds.has(pollIdStr) && relatedPoll) {
+                  // If the poll card hasn't been rendered yet, let it proceed to render PollMessageCard
+                } else {
+                  return null;
+                }
+              }
+
               if ((isUpdateActivity || isDuplicateCard) && (relatedPoll || relatedTask || relatedItinerary || relatedBooking || relatedDoc) && !shouldRenderExpenseCard) {
+                if (isDuplicateCard) {
+                  return null;
+                }
                 return (
                   <div key={act._id || i} className="flex justify-center my-1.5">
-                    <div className="bg-[#182229]/90 border border-slate-800/80 px-3 py-1 rounded-lg text-[11px] text-slate-400 font-medium shadow-sm flex items-center gap-1.5">
+                    <div className="bg-[#182229]/90 border border-slate-800/80 px-3 py-1.5 rounded-lg text-[11px] text-slate-300 font-medium shadow-sm flex items-center gap-1.5 select-none">
                       <span>{act.description}</span>
-                      <span className="text-[10px] text-slate-500">• {timeStr}</span>
+                      <span className="text-slate-500 font-semibold">·</span>
+                      <span className="text-[10px] text-slate-400">{timeStr}</span>
                     </div>
                   </div>
                 );

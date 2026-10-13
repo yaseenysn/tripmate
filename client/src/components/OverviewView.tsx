@@ -1,5 +1,6 @@
 import React from 'react';
 import { Calendar, Users, IndianRupee, Clock, CheckSquare, Activity as ActivityIcon, ArrowRight, Wallet } from 'lucide-react';
+import { format12HourTime } from '../utils/timeFormat';
 
 interface OverviewViewProps {
   trip: any;
@@ -136,7 +137,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               <div className="flex-1 min-w-0">
                 <p className="text-slate-200 leading-relaxed">{act.description}</p>
                 <span className="text-[10px] text-slate-500">
-                  {new Date(act.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {format12HourTime(act.createdAt)}
                 </span>
               </div>
             </div>

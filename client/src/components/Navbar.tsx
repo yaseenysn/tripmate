@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Compass, Search, Bell, Plus, User as UserIcon, LogOut, KeyRound, CheckCircle } from 'lucide-react';
 import { apiGetNotifications, apiMarkNotificationRead, apiMarkAllNotificationsRead } from '../services/api';
+import { format12HourTime } from '../utils/timeFormat';
 
 interface NavbarProps {
   user: any;
@@ -162,7 +163,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <div className="flex items-start justify-between gap-2">
                           <span className="font-medium text-xs text-indigo-300">{n.title}</span>
                           <span className="text-[10px] text-slate-500">
-                            {new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {format12HourTime(n.createdAt)}
                           </span>
                         </div>
                         <p className="text-xs text-slate-300 mt-1 leading-relaxed">{n.message}</p>
