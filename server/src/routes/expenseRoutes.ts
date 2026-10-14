@@ -11,19 +11,68 @@ import { deleteFromCloudinary } from '../config/cloudinary';
 
 const router = Router();
 
-// Helper to calculate participants split shares
 // Helper to calculate participants split shares & status using integer paise
 const calculateShares = (
   amount: number,
   splitType: 'EQUAL' | 'CUSTOM' | 'PERCENTAGE',
-  participantsInput: { userId: string; share?: number; percentage?: number; status?: 'PENDING' | 'PAID' }[],
-  paidById?: string
+  participantsInput: {
+    userId: string | mongoose.Types.ObjectId;
+    share?: number;
+    percentage?: number;
+    paidAmount?: number;
+    status?: string;
+  }[],
+  payerIdStr?: string,
+  previousPayerIdStr?: string
 ) => {
-  const payerIdStr = paidById ? paidById.toString() : '';
+  const payerIdString = payerIdStr ? payerIdStr.toString() : '';
   const totalAmountPaise = Math.round((Number(amount) || 0) * 100);
   const count = participantsInput.length;
 
   if (count === 0) return [];
+
+  // Helper to determine paidAmount and status
+  const resolveStatusAndPaid = (
+    uIdStr: string,
+    sharePaise: number,
+    inputPaidAmount?: number,
+    inputStatus?: string
+  ) => {
+    const isPayer = payerIdString && uIdStr === payerIdString;
+    const share = sharePaise / 100;
+
+    if (isPayer) {
+      return {
+        paidAmount: share,
+        status: 'PAID' as const
+      };
+    }
+
+    // If member was the previous payer, but is no longer the payer, their split paid to the new payer is 0
+    if (previousPayerIdStr && uIdStr === previousPayerIdStr && uIdStr !== payerIdString) {
+      return {
+        paidAmount: 0,
+        status: 'PENDING' as const
+      };
+    }
+
+    const currentPaid = inputPaidAmount !== undefined
+      ? Number(inputPaidAmount)
+      : (inputStatus === 'PAID' ? share : 0);
+
+    const paidAmount = Math.max(0, Math.round(currentPaid * 100) / 100);
+    let status: 'PENDING' | 'PARTIAL' | 'PAID' = 'PENDING';
+
+    if (paidAmount >= share && share > 0) {
+      status = 'PAID';
+    } else if (paidAmount > 0) {
+      status = 'PARTIAL';
+    } else {
+      status = 'PENDING';
+    }
+
+    return { paidAmount, status };
+  };
 
   if (splitType === 'EQUAL') {
     const baseSharePaise = Math.floor(totalAmountPaise / count);
@@ -41,62 +90,96 @@ const calculateShares = (
 
     return participantsInput.map((p, index) => {
       const uIdStr = p.userId.toString();
-      const isPayer = payerIdStr && uIdStr === payerIdStr;
       const sharePaise = baseSharePaise + (extraMap[index] || 0);
+      const { paidAmount, status } = resolveStatusAndPaid(uIdStr, sharePaise, p.paidAmount, p.status);
+
       return {
         userId: new mongoose.Types.ObjectId(p.userId),
         share: sharePaise / 100,
         percentage: Math.round((100 / count) * 10) / 10,
-        status: p.status || (isPayer ? 'PAID' : 'PENDING')
+        paidAmount,
+        status
       };
     });
   } else if (splitType === 'PERCENTAGE') {
+    const totalPct = participantsInput.reduce((s, p) => s + (Number(p.percentage) || 0), 0);
+    // Validation: Total percentage must equal 100% within precision limit (0.01%)
+    if (Math.abs(Math.round(totalPct * 100) - 10000) > 1) {
+      throw new Error(`Participant percentages total ${totalPct.toFixed(2)}%, but must equal exactly 100%.`);
+    }
+
     let sumPaise = 0;
     const computed = participantsInput.map(p => {
       const pct = Number(p.percentage) || 0;
-      const shPaise = Math.round((totalAmountPaise * pct) / 100);
+      const shPaise = Math.floor((totalAmountPaise * pct) / 100);
       sumPaise += shPaise;
-      const uIdStr = p.userId.toString();
-      const isPayer = payerIdStr && uIdStr === payerIdStr;
       return {
         userId: new mongoose.Types.ObjectId(p.userId),
         sharePaise: shPaise,
         percentage: pct,
-        status: p.status || (isPayer ? 'PAID' : 'PENDING')
+        paidAmount: p.paidAmount,
+        status: p.status
       };
     });
 
-    const totalPct = participantsInput.reduce((s, p) => s + (Number(p.percentage) || 0), 0);
     const diffPaise = totalAmountPaise - sumPaise;
-    if (Math.abs(totalPct - 100) < 0.01 && diffPaise !== 0 && computed.length > 0) {
+    if (diffPaise !== 0 && computed.length > 0) {
+      // Deterministic allocation of remainder to highest percentage (tie-break by userId string)
       let targetIdx = 0;
       let maxPct = -1;
+      let targetIdStr = '';
       computed.forEach((c, idx) => {
-        if (c.percentage > maxPct) {
+        const uId = c.userId.toString();
+        if (c.percentage > maxPct || (c.percentage === maxPct && uId.localeCompare(targetIdStr) < 0)) {
           maxPct = c.percentage;
           targetIdx = idx;
+          targetIdStr = uId;
         }
       });
       computed[targetIdx].sharePaise += diffPaise;
     }
 
-    return computed.map(c => ({
-      userId: c.userId,
-      share: c.sharePaise / 100,
-      percentage: c.percentage,
-      status: c.status
-    }));
+    return computed.map(c => {
+      const uIdStr = c.userId.toString();
+      const { paidAmount, status } = resolveStatusAndPaid(uIdStr, c.sharePaise, c.paidAmount, c.status);
+      return {
+        userId: c.userId,
+        share: c.sharePaise / 100,
+        percentage: c.percentage,
+        paidAmount,
+        status
+      };
+    });
   } else {
     // CUSTOM
+    let sumPaise = 0;
+    for (const p of participantsInput) {
+      const sh = Number(p.share) || 0;
+      if (sh < 0) {
+        throw new Error('Participant custom share cannot be negative.');
+      }
+      sumPaise += Math.round(sh * 100);
+    }
+
+    // Validation: Custom shares must sum exactly to total amount in paise
+    if (sumPaise !== totalAmountPaise) {
+      throw new Error(
+        `Participant shares (₹${(sumPaise / 100).toFixed(2)}) must equal the total expense amount (₹${(totalAmountPaise / 100).toFixed(2)}).`
+      );
+    }
+
     return participantsInput.map(p => {
       const uIdStr = p.userId.toString();
-      const isPayer = payerIdStr && uIdStr === payerIdStr;
       const sh = p.share !== undefined ? Number(p.share) : 0;
+      const sharePaise = Math.round(sh * 100);
+      const { paidAmount, status } = resolveStatusAndPaid(uIdStr, sharePaise, p.paidAmount, p.status);
+
       return {
         userId: new mongoose.Types.ObjectId(p.userId),
-        share: Math.round(sh * 100) / 100,
-        percentage: amount > 0 ? Math.round(((sh || 0) / amount) * 100) : 0,
-        status: p.status || (isPayer ? 'PAID' : 'PENDING')
+        share: sharePaise / 100,
+        percentage: totalAmountPaise > 0 ? Math.round((sharePaise / totalAmountPaise) * 1000) / 10 : 0,
+        paidAmount,
+        status
       };
     });
   }
@@ -141,7 +224,12 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, requireNo
       targetParticipants = members.map(m => ({ userId: m.userId.toString() }));
     }
 
-    const computedParticipants = calculateShares(numAmount, typeOfSplit, targetParticipants, payerId);
+    let computedParticipants;
+    try {
+      computedParticipants = calculateShares(numAmount, typeOfSplit, targetParticipants, payerId);
+    } catch (validationErr: any) {
+      return res.status(400).json({ error: validationErr.message || 'Invalid expense split distribution' });
+    }
 
     const expense = await Expense.create({
       tripId,
@@ -230,6 +318,29 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
     }
 
     const oldPublicId = expense.receiptPublicId;
+    const oldPayerIdStr = expense.paidBy.toString();
+    const isChangingPayer = paidBy !== undefined && paidBy.toString() !== oldPayerIdStr;
+
+    if (isChangingPayer) {
+      // Check if there are confirmed payments linked to this expense
+      const hasConfirmedSplitSettlement = await Settlement.exists({
+        tripId,
+        idempotencyKey: { $regex: `^split_${expenseId}_` },
+        status: 'PAID'
+      });
+
+      const hasParticipantPayments = expense.participants.some(p => {
+        if (p.userId.toString() === oldPayerIdStr) return false;
+        const pPaid = p.paidAmount !== undefined ? Number(p.paidAmount) : (p.status === 'PAID' ? Number(p.share || 0) : 0);
+        return pPaid > 0;
+      });
+
+      if (hasConfirmedSplitSettlement || hasParticipantPayments) {
+        return res.status(400).json({
+          error: 'Cannot change the payer of an expense that already has confirmed split payments. Payments were already received by the original payer. Settle balances directly or adjust amounts without changing the payer.'
+        });
+      }
+    }
 
     if (title !== undefined) expense.title = title;
     if (amount !== undefined) expense.amount = Number(amount);
@@ -253,15 +364,40 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
           userId: p.userId.toString(),
           share: p.share,
           percentage: p.percentage,
+          paidAmount: p.paidAmount,
           status: p.status
         }));
+      } else {
+        // Merge existing paidAmount and status if participants array is supplied
+        const existingParticipantMap = new Map<string, any>();
+        expense.participants.forEach(p => {
+          existingParticipantMap.set(p.userId.toString(), p);
+        });
+        targetParticipants = targetParticipants.map((tp: any) => {
+          const uIdStr = (tp.userId?._id || tp.userId).toString();
+          const existing = existingParticipantMap.get(uIdStr);
+          return {
+            ...tp,
+            userId: uIdStr,
+            paidAmount: tp.paidAmount !== undefined
+              ? tp.paidAmount
+              : (existing ? (existing.paidAmount !== undefined ? existing.paidAmount : (existing.status === 'PAID' ? existing.share : 0)) : 0),
+            status: tp.status || (existing ? existing.status : undefined)
+          };
+        });
       }
-      expense.participants = calculateShares(
-        expense.amount,
-        expense.splitType,
-        targetParticipants,
-        expense.paidBy.toString()
-      ) as any;
+
+      try {
+        expense.participants = calculateShares(
+          expense.amount,
+          expense.splitType,
+          targetParticipants,
+          expense.paidBy.toString(),
+          oldPayerIdStr
+        ) as any;
+      } catch (validationErr: any) {
+        return res.status(400).json({ error: validationErr.message || 'Invalid expense split distribution' });
+      }
     }
 
     await expense.save();
@@ -291,6 +427,7 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
     const { id: tripId, expenseId } = req.params;
     const currentUserId = req.user!.userId;
     const targetUserId = req.body.userId || currentUserId;
+    const providedIdempotencyKey = req.body.idempotencyKey;
 
     const expense = await Expense.findById(expenseId);
     if (!expense || expense.tripId.toString() !== tripId) {
@@ -305,42 +442,162 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
       return res.status(404).json({ error: 'Participant not found in expense split' });
     }
 
+    // Server-side idempotency check:
+    // If the client provided an idempotency key and that settlement already exists,
+    // return the existing processed state immediately without creating a duplicate payment.
+    if (providedIdempotencyKey) {
+      const existingSettlement = await Settlement.findOne({
+        tripId,
+        idempotencyKey: providedIdempotencyKey
+      });
+      if (existingSettlement) {
+        const populated = await Expense.findById(expense._id)
+          .populate('paidBy', 'name avatar email')
+          .populate('participants.userId', 'name avatar email');
+        return res.status(200).json({
+          expense: populated,
+          settlement: existingSettlement,
+          deduplicated: true,
+          message: 'Payment already processed'
+        });
+      }
+    }
+
+    const currentPaid = participant.paidAmount !== undefined
+      ? Number(participant.paidAmount)
+      : (participant.status === 'PAID' ? Number(participant.share) : 0);
+    const remainingToPay = Math.max(0, Math.round((Number(participant.share) - currentPaid) * 100) / 100);
+
     // Prevent duplicate payment for already paid split
-    if (participant.status === 'PAID') {
+    if (remainingToPay <= 0 || participant.status === 'PAID') {
       const populated = await Expense.findById(expense._id)
         .populate('paidBy', 'name avatar email')
         .populate('participants.userId', 'name avatar email');
-      return res.json({ expense: populated });
+      return res.json({ expense: populated, message: 'Split already paid' });
     }
 
-    participant.status = 'PAID';
-    await expense.save();
+    // Determine payment amount (allows partial payment if specified in req.body.amount)
+    const requestedAmount = req.body.amount !== undefined ? Number(req.body.amount) : remainingToPay;
+    if (requestedAmount <= 0) {
+      return res.status(400).json({ error: 'Payment amount must be greater than zero' });
+    }
+    const payAmount = Math.min(requestedAmount, remainingToPay);
+
+    const newPaidTotal = Math.round((currentPaid + payAmount) * 100) / 100;
+    const payerIdStr = expense.paidBy.toString();
+    const targetIdStr = targetUserId.toString();
+    const entropy = Math.random().toString(36).substring(2, 10);
+    const splitKey = providedIdempotencyKey || `split_${expense._id}_${targetIdStr}_${Math.round(payAmount * 100)}_${Date.now()}_${entropy}`;
+
+    let settlementRecord: any = null;
+
+    // Detect if active MongoDB connection supports multi-document transactions (Replica Set / Sharded like MongoDB Atlas)
+    const clientTopology = (mongoose.connection as any)?.client?.topology?.description?.type;
+    const isReplicaSet = clientTopology === 'ReplicaSetWithPrimary' || clientTopology === 'Sharded';
+
+    if (isReplicaSet) {
+      // Transaction path: ACID multi-document atomicity on MongoDB Atlas
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          if (providedIdempotencyKey) {
+            const existingInTx = await Settlement.findOne({ tripId, idempotencyKey: providedIdempotencyKey }).session(session);
+            if (existingInTx) {
+              settlementRecord = existingInTx;
+              return;
+            }
+          }
+
+          if (payerIdStr !== targetIdStr && payAmount > 0) {
+            const createdArr = await Settlement.create(
+              [{
+                tripId,
+                fromUser: targetUserId,
+                toUser: expense.paidBy,
+                amount: payAmount,
+                status: 'PAID',
+                paidAt: new Date(),
+                notes: `Split payment for "${expense.title}"`,
+                idempotencyKey: splitKey
+              }],
+              { session }
+            );
+            settlementRecord = createdArr[0];
+          }
+
+          participant.paidAmount = newPaidTotal;
+          participant.status = newPaidTotal >= participant.share ? 'PAID' : 'PARTIAL';
+          await expense.save({ session });
+        });
+      } catch (err: any) {
+        if (err.code === 11000) {
+          const populated = await Expense.findById(expense._id)
+            .populate('paidBy', 'name avatar email')
+            .populate('participants.userId', 'name avatar email');
+          const existingSettlement = providedIdempotencyKey
+            ? await Settlement.findOne({ tripId, idempotencyKey: providedIdempotencyKey })
+            : null;
+          return res.status(200).json({
+            expense: populated,
+            settlement: existingSettlement,
+            deduplicated: true,
+            message: 'Payment already processed'
+          });
+        }
+        throw err;
+      } finally {
+        await session.endSession();
+      }
+    } else {
+      // Standalone MongoDB fallback: create Settlement first, then save Expense.
+      // If Expense save fails, compensate by deleting the created Settlement.
+      if (payerIdStr !== targetIdStr && payAmount > 0) {
+        try {
+          settlementRecord = await Settlement.create({
+            tripId,
+            fromUser: targetUserId,
+            toUser: expense.paidBy,
+            amount: payAmount,
+            status: 'PAID',
+            paidAt: new Date(),
+            notes: `Split payment for "${expense.title}"`,
+            idempotencyKey: splitKey
+          });
+        } catch (err: any) {
+          if (err.code === 11000) {
+            const populated = await Expense.findById(expense._id)
+              .populate('paidBy', 'name avatar email')
+              .populate('participants.userId', 'name avatar email');
+            const existingSettlement = providedIdempotencyKey
+              ? await Settlement.findOne({ tripId, idempotencyKey: providedIdempotencyKey })
+              : null;
+            return res.status(200).json({
+              expense: populated,
+              settlement: existingSettlement,
+              deduplicated: true,
+              message: 'Payment already processed'
+            });
+          }
+          throw err;
+        }
+      }
+
+      try {
+        participant.paidAmount = newPaidTotal;
+        participant.status = newPaidTotal >= participant.share ? 'PAID' : 'PARTIAL';
+        await expense.save();
+      } catch (expenseSaveErr: any) {
+        // Compensating rollback: delete settlement to maintain consistency
+        if (settlementRecord && settlementRecord._id) {
+          await Settlement.deleteOne({ _id: settlementRecord._id });
+        }
+        throw expenseSaveErr;
+      }
+    }
 
     const populated = await Expense.findById(expense._id)
       .populate('paidBy', 'name avatar email')
       .populate('participants.userId', 'name avatar email');
-
-    // Record or update confirmed Settlement record for this expense split payment
-    const payerIdStr = expense.paidBy.toString();
-    const targetIdStr = targetUserId.toString();
-    const splitKey = `split_${expense._id}_${targetIdStr}`;
-
-    if (payerIdStr !== targetIdStr && participant.share > 0) {
-      await Settlement.findOneAndUpdate(
-        { tripId, idempotencyKey: splitKey },
-        {
-          tripId,
-          fromUser: targetUserId,
-          toUser: expense.paidBy,
-          amount: participant.share,
-          status: 'PAID',
-          paidAt: new Date(),
-          notes: `Split payment for "${expense.title}"`,
-          idempotencyKey: splitKey
-        },
-        { upsert: true, new: true }
-      );
-    }
 
     // Update existing activity record for this expense in place so metadata.expense is fresh
     await Activity.updateMany(
@@ -401,6 +658,29 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
       return res.status(403).json({ error: 'You do not have permission to delete this expense' });
     }
 
+    // Never delete expenses with confirmed payments (whether through direct split payments or synchronized Settlements-tab payments)
+    const confirmedSplitPayments = await Settlement.find({
+      tripId,
+      idempotencyKey: { $regex: `^split_${expenseId}_` },
+      status: 'PAID'
+    });
+    const directPaidSum = confirmedSplitPayments.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+
+    const payerIdStr = expense.paidBy.toString();
+    const participantPaidSum = expense.participants.reduce((sum, p) => {
+      if (p.userId.toString() === payerIdStr) return sum;
+      const pPaid = p.paidAmount !== undefined ? Number(p.paidAmount) : (p.status === 'PAID' ? Number(p.share || 0) : 0);
+      return sum + Math.max(0, pPaid);
+    }, 0);
+
+    const totalConfirmedPaid = Math.max(directPaidSum, participantPaidSum);
+
+    if (totalConfirmedPaid > 0) {
+      return res.status(400).json({
+        error: `Cannot delete expense with confirmed split payment(s) totaling ₹${totalConfirmedPaid.toLocaleString('en-IN')}. Confirmed real-world payments must be preserved in the audit trail. To adjust obligations, edit the expense amount or settle balances directly.`
+      });
+    }
+
     if (expense.receiptPublicId) {
       await deleteFromCloudinary(expense.receiptPublicId, 'image');
       await deleteFromCloudinary(expense.receiptPublicId, 'raw');
@@ -409,10 +689,11 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
     const title = expense.title;
     await Expense.findByIdAndDelete(expenseId);
 
-    // Also remove any settlement records linked to this expense's splits
+    // Clean up any non-paid (draft/pending) settlement records linked to this expense's splits
     await Settlement.deleteMany({
       tripId,
-      idempotencyKey: { $regex: `^split_${expenseId}_` }
+      idempotencyKey: { $regex: `^split_${expenseId}_` },
+      status: { $ne: 'PAID' }
     });
 
     // Clean up activity log items for this deleted expense so chat feed doesn't retain ghost cards

@@ -65,7 +65,12 @@ const ExpenseMessageCardComponent: React.FC<ExpenseMessageCardProps> = ({
 
   const paidCount = paidParticipants.length;
   const totalCount = participants.length || 1;
-  const paidSum = paidParticipants.reduce((acc: number, p: any) => acc + (p.share || 0), 0);
+  const paidSum = participants.reduce((acc: number, p: any) => {
+    const pId = getIdStr(p.userId);
+    if (pId === payerId) return acc + (Number(p.share) || 0);
+    const pPaid = p.paidAmount !== undefined ? Number(p.paidAmount) : (p.status === 'PAID' ? Number(p.share || 0) : 0);
+    return acc + Math.min(Number(p.share || 0), pPaid);
+  }, 0);
   const totalAmount = Number(expense.amount || 0);
   const remainingAmount = Math.max(0, totalAmount - paidSum);
   const isFullySettled = remainingAmount <= 0.01 || (totalCount > 0 && paidCount === totalCount);
@@ -76,9 +81,17 @@ const ExpenseMessageCardComponent: React.FC<ExpenseMessageCardProps> = ({
     : null;
 
   const isUserPayer = isPayer;
-  const isUserPending = userParticipant && !isUserPayer && userParticipant.status !== 'PAID';
-  const isUserPaid = userParticipant && !isUserPayer && userParticipant.status === 'PAID';
-  const userShare = userParticipant?.share || 0;
+  const userShare = Number(userParticipant?.share || 0);
+  const userPaidAmount = userParticipant
+    ? (userParticipant.paidAmount !== undefined
+        ? Number(userParticipant.paidAmount)
+        : (userParticipant.status === 'PAID' ? userShare : 0))
+    : 0;
+  const userRemaining = Math.max(0, Math.round((userShare - userPaidAmount) * 100) / 100);
+
+  const isUserPaid = userParticipant && !isUserPayer && userRemaining <= 0.01;
+  const isUserPartial = userParticipant && !isUserPayer && userPaidAmount > 0.01 && userRemaining > 0.01;
+  const isUserPending = userParticipant && !isUserPayer && userRemaining > 0.01;
 
   // Format date
   const expDate = expense.date ? new Date(expense.date) : new Date();
@@ -219,10 +232,18 @@ const ExpenseMessageCardComponent: React.FC<ExpenseMessageCardProps> = ({
         {isUserPending && (
           <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex flex-wrap items-center justify-between gap-1">
             <div>
-              <span className="text-[10px] text-amber-400 font-bold block uppercase">Your Share</span>
-              <span className="font-extrabold text-xs">₹{userShare.toLocaleString()}</span>
+              <span className="text-[10px] text-amber-400 font-bold block uppercase">
+                {isUserPartial ? 'Partial Split' : 'Your Share'}
+              </span>
+              <span className="font-extrabold text-xs">
+                {isUserPartial
+                  ? `₹${userPaidAmount.toLocaleString()} of ₹${userShare.toLocaleString()} paid`
+                  : `₹${userShare.toLocaleString()}`}
+              </span>
             </div>
-            <span className="text-[10px] font-medium text-amber-300">You owe {payerName} ₹{userShare.toLocaleString()}</span>
+            <span className="text-[10px] font-medium text-amber-300">
+              You owe {payerName} ₹{userRemaining.toLocaleString()}
+            </span>
           </div>
         )}
 
@@ -241,11 +262,11 @@ const ExpenseMessageCardComponent: React.FC<ExpenseMessageCardProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onPaySplit(expense, userShare, payerName, e);
+              onPaySplit(expense, userRemaining, payerName, e);
             }}
             className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-md transition-all flex items-center gap-1 font-extrabold active:scale-95"
           >
-            <span>Mark as Paid</span>
+            <span>{isUserPartial ? `Pay Remaining ₹${userRemaining.toLocaleString()}` : 'Mark as Paid'}</span>
           </button>
         ) : (
           <span className="text-[11px] font-semibold text-slate-400">

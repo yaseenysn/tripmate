@@ -136,6 +136,29 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
 
     try {
       const numAmount = Number(amount);
+
+      // Validation for CUSTOM split
+      if (splitType === 'CUSTOM') {
+        const sumShares = selectedMembers.reduce((sum, uId) => sum + (Number(customShares[uId]) || 0), 0);
+        const sumPaise = Math.round(sumShares * 100);
+        const totalPaise = Math.round(numAmount * 100);
+        if (sumPaise !== totalPaise) {
+          setError(`Custom shares total ₹${sumShares.toFixed(2)}, but must equal the expense total of ₹${numAmount.toFixed(2)}.`);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Validation for PERCENTAGE split
+      if (splitType === 'PERCENTAGE') {
+        const sumPcts = selectedMembers.reduce((sum, uId) => sum + (Number(customPcts[uId]) || 0), 0);
+        if (Math.abs(Math.round(sumPcts * 100) - 10000) > 1) {
+          setError(`Percentages total ${sumPcts.toFixed(2)}%, but must equal exactly 100%.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const participantsPayload = selectedMembers.map((uId) => {
         const item: any = { userId: uId };
         if (splitType === 'CUSTOM') {
@@ -344,6 +367,52 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
                 );
               })}
             </div>
+
+            {/* Split Allocation Status Indicator */}
+            {splitType === 'CUSTOM' && (
+              (() => {
+                const numAmt = Number(amount) || 0;
+                const allocated = selectedMembers.reduce((sum, uId) => sum + (Number(customShares[uId]) || 0), 0);
+                const diff = Math.round((numAmt - allocated) * 100) / 100;
+                const isMatch = Math.abs(diff) === 0 && numAmt > 0;
+                return (
+                  <div className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between ${
+                    isMatch
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : diff > 0
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}>
+                    <span>Total Allocated: ₹{allocated.toLocaleString()} / ₹{numAmt.toLocaleString()}</span>
+                    <span>
+                      {isMatch ? '✓ Exact match' : diff > 0 ? `₹${diff.toLocaleString()} remaining` : `₹${Math.abs(diff).toLocaleString()} over`}
+                    </span>
+                  </div>
+                );
+              })()
+            )}
+
+            {splitType === 'PERCENTAGE' && (
+              (() => {
+                const allocatedPct = selectedMembers.reduce((sum, uId) => sum + (Number(customPcts[uId]) || 0), 0);
+                const diffPct = Math.round((100 - allocatedPct) * 100) / 100;
+                const isMatch = Math.abs(diffPct) < 0.01;
+                return (
+                  <div className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between ${
+                    isMatch
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : diffPct > 0
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}>
+                    <span>Total Percentage: {allocatedPct}% / 100%</span>
+                    <span>
+                      {isMatch ? '✓ Exact 100%' : diffPct > 0 ? `${diffPct}% remaining` : `${Math.abs(diffPct)}% over`}
+                    </span>
+                  </div>
+                );
+              })()
+            )}
           </div>
 
           {/* Receipt Upload */}

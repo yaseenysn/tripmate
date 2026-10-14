@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, Shield, User, UserMinus, Plus, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { apiRemoveMember, apiUpdateMemberRole } from '../services/api';
+import { invalidateTripReportCache } from '../services/tripCache';
 
 interface MembersViewProps {
   tripId: string;
@@ -23,8 +24,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
     if (!confirm(`Remove ${name} from this trip?`)) return;
     try {
       await apiRemoveMember(tripId, memberId);
+      invalidateTripReportCache(tripId);
       onRefresh();
-    } catch (err) {
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove member');
       console.error(err);
     }
   };
@@ -33,6 +36,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
     const newRole = currentRole === 'ADMIN' ? 'MEMBER' : 'ADMIN';
     try {
       await apiUpdateMemberRole(tripId, memberId, newRole);
+      invalidateTripReportCache(tripId);
       onRefresh();
     } catch (err) {
       console.error(err);

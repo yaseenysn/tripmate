@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { Settlement, Trip, User } from '../models';
+import { Settlement, Trip, User, Expense, Activity } from '../models';
 import { authenticateToken } from '../middleware/auth';
 import {
   requireTripMembership,
@@ -15,6 +15,65 @@ import { createNotification } from '../services/notificationService';
 import { emitToTrip } from '../sockets/socketHandler';
 
 const router = Router();
+
+// Synchronize expense splits for settled pairs to prevent double counting
+const syncExpenseSplitsForSettlement = async (
+  tripId: string,
+  fromUser: any,
+  toUser: any,
+  amount: number
+) => {
+  let remainingPaymentToAllocate = amount;
+  const fromUserIdStr = (fromUser?._id || fromUser).toString();
+  const toUserIdStr = (toUser?._id || toUser).toString();
+
+  const relatedExpenses = await Expense.find({
+    tripId,
+    paidBy: toUserIdStr,
+    'participants.userId': fromUserIdStr
+  }).sort({ date: 1, createdAt: 1 });
+
+  for (const exp of relatedExpenses) {
+    if (remainingPaymentToAllocate <= 0) break;
+    const part = exp.participants.find(
+      (p) => p.userId.toString() === fromUserIdStr
+    );
+    if (!part) continue;
+
+    const curPaid = part.paidAmount !== undefined
+      ? Number(part.paidAmount)
+      : (part.status === 'PAID' ? Number(part.share) : 0);
+    const needed = Math.max(0, Math.round((Number(part.share) - curPaid) * 100) / 100);
+
+    if (needed > 0) {
+      const applied = Math.min(remainingPaymentToAllocate, needed);
+      part.paidAmount = Math.round((curPaid + applied) * 100) / 100;
+      part.status = part.paidAmount >= part.share ? 'PAID' : 'PARTIAL';
+      remainingPaymentToAllocate = Math.round((remainingPaymentToAllocate - applied) * 100) / 100;
+      await exp.save();
+
+      const popExp = await Expense.findById(exp._id)
+        .populate('paidBy', 'name avatar email')
+        .populate('participants.userId', 'name avatar email');
+
+      await Activity.updateMany(
+        {
+          tripId,
+          $or: [
+            { 'metadata.expenseId': exp._id },
+            { 'metadata.expense._id': exp._id }
+          ]
+        },
+        {
+          $set: {
+            'metadata.expense': popExp
+          }
+        }
+      );
+      emitToTrip(tripId, 'expense.updated', popExp);
+    }
+  }
+};
 
 // GET /api/trips/:id/settlements
 router.get(
@@ -159,6 +218,9 @@ router.post(
         .populate('fromUser', 'name avatar email')
         .populate('toUser', 'name avatar email');
 
+      // Synchronize related expense splits so expense cards stay accurate and prevent duplicate payment
+      await syncExpenseSplitsForSettlement(tripId, fromUser, toUser, numAmount);
+
       const payerName = (populated?.fromUser as any)?.name || 'Member';
       const payeeName = (populated?.toUser as any)?.name || 'Member';
 
@@ -231,6 +293,14 @@ router.post(
       settlement.status = 'PAID';
       settlement.paidAt = new Date();
       await settlement.save();
+
+      // Synchronize related expense splits so expense cards stay accurate and prevent duplicate payment
+      await syncExpenseSplitsForSettlement(
+        tripId,
+        settlement.fromUser,
+        settlement.toUser,
+        settlement.amount
+      );
 
       const payerName = (settlement.fromUser as any)?.name || 'Member';
       const payeeName = (settlement.toUser as any)?.name || 'Member';

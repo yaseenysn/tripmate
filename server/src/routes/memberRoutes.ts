@@ -66,6 +66,19 @@ router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership
     }
 
     const removedUserName = (memberDoc.userId as any)?.name || 'Member';
+
+    // Verify member has settled all balances before removal
+    const calculation = await calculateTripBalancesAndSettlements(tripId);
+    const targetUserIdStr = (memberDoc.userId?._id || memberDoc.userId).toString();
+    const targetBalance = calculation.memberBalances.find(m => m.userId === targetUserIdStr);
+
+    if (targetBalance && Math.abs(targetBalance.netBalance) > 0.01) {
+      const isOwed = targetBalance.netBalance > 0;
+      return res.status(400).json({
+        error: `Cannot remove ${removedUserName} because they have an unsettled balance of ₹${Math.abs(targetBalance.netBalance).toFixed(2)} (${isOwed ? 'to receive' : 'to pay'}). All balances must be settled before removing a member.`
+      });
+    }
+
     await TripMember.findByIdAndDelete(memberId);
 
     await logActivity(tripId, req.user!.userId, 'MEMBER_REMOVED', `removed ${removedUserName} from the trip`);

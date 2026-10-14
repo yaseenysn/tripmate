@@ -25,13 +25,28 @@ export const PaySplitConfirmationModal: React.FC<PaySplitConfirmationModalProps>
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [attemptKey, setAttemptKey] = useState<string>('');
+
+  React.useEffect(() => {
+    if (isOpen && expense) {
+      const entropy = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+      setAttemptKey(`splitpay_${tripId}_${expense._id}_${Math.round(Number(userShare) * 100)}_${Date.now()}_${entropy}`);
+    } else {
+      setAttemptKey('');
+    }
+  }, [isOpen, tripId, expense?._id, userShare]);
 
   const handleConfirmPay = async () => {
     setLoading(true);
     setError('');
 
     try {
-      const res = await apiPayExpenseSplit(tripId, expense._id);
+      const entropy = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+      const keyToUse = attemptKey || `splitpay_${tripId}_${expense._id}_${Math.round(Number(userShare) * 100)}_${Date.now()}_${entropy}`;
+      const res = await apiPayExpenseSplit(tripId, expense._id, {
+        amount: userShare,
+        idempotencyKey: keyToUse
+      });
       onSuccess(res?.expense);
       onClose();
     } catch (err: any) {

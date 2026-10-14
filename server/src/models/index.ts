@@ -120,7 +120,8 @@ export interface IExpenseParticipant {
   userId: mongoose.Types.ObjectId;
   share: number;
   percentage?: number;
-  status?: 'PENDING' | 'PAID';
+  paidAmount?: number;
+  status?: 'PENDING' | 'PARTIAL' | 'PAID';
 }
 
 export interface IExpense extends Document {
@@ -155,7 +156,8 @@ const ExpenseSchema = new Schema<IExpense>({
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     share: { type: Number, required: true },
     percentage: { type: Number },
-    status: { type: String, enum: ['PENDING', 'PAID'], default: 'PENDING' }
+    paidAmount: { type: Number, default: 0 },
+    status: { type: String, enum: ['PENDING', 'PARTIAL', 'PAID'], default: 'PENDING' }
   }],
   notes: { type: String },
   receiptUrl: { type: String },

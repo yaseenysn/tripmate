@@ -148,8 +148,17 @@ export const apiUpdateExpense = (tripId: string, expenseId: string, updates: any
   request(`/trips/${tripId}/expenses/${expenseId}`, { method: 'PATCH', body: JSON.stringify(updates) });
 export const apiDeleteExpense = (tripId: string, expenseId: string) =>
   request(`/trips/${tripId}/expenses/${expenseId}`, { method: 'DELETE' });
-export const apiPayExpenseSplit = (tripId: string, expenseId: string, userId?: string) =>
-  request(`/trips/${tripId}/expenses/${expenseId}/pay-split`, { method: 'POST', body: JSON.stringify({ userId }) });
+export const apiPayExpenseSplit = (
+  tripId: string,
+  expenseId: string,
+  options?: string | { userId?: string; amount?: number; idempotencyKey?: string }
+) => {
+  const payload = typeof options === 'string' ? { userId: options } : (options || {});
+  return request(`/trips/${tripId}/expenses/${expenseId}/pay-split`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+};
 
 // Budget
 export const apiGetBudget = (tripId: string) => request(`/trips/${tripId}/budget`);

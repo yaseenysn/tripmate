@@ -105,12 +105,16 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
     socket.on('expense.created', handleLiveReportUpdate);
     socket.on('expense.updated', handleLiveReportUpdate);
     socket.on('settlement.updated', handleLiveReportUpdate);
+    socket.on('member.joined', handleLiveReportUpdate);
+    socket.on('member.removed', handleLiveReportUpdate);
 
     return () => {
       socket.off('expense.deleted', handleLiveReportUpdate);
       socket.off('expense.created', handleLiveReportUpdate);
       socket.off('expense.updated', handleLiveReportUpdate);
       socket.off('settlement.updated', handleLiveReportUpdate);
+      socket.off('member.joined', handleLiveReportUpdate);
+      socket.off('member.removed', handleLiveReportUpdate);
     };
   }, [isOpen, tripId]);
 

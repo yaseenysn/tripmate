@@ -22,10 +22,13 @@ export const SettlementsView: React.FC<SettlementsViewProps> = ({
   const handleSettlePair = async (fromUser: any, toUser: any, amount: number) => {
     setLoading(true);
     try {
+      const entropy = Math.random().toString(36).substring(2, 10);
+      const idempotencyKey = `rec_${tripId}_${fromUser._id}_${toUser._id}_${Math.round(amount * 100)}_${Date.now()}_${entropy}`;
       await apiRecordSettlement(tripId, {
         fromUser: fromUser._id,
         toUser: toUser._id,
-        amount
+        amount,
+        idempotencyKey
       });
       onRefresh();
     } catch (err) {

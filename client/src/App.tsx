@@ -663,6 +663,7 @@ export const App: React.FC = () => {
 
       const handleMemberSync = () => {
         if (activeTripIdRef.current) {
+          invalidateTripReportCache(activeTripIdRef.current);
           invalidateSectionInCache(activeTripIdRef.current, 'settlements');
           refreshSection(activeTripIdRef.current, 'members');
           if (activeSectionRef.current === 'settlements') {
