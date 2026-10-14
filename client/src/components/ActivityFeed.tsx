@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { ExpenseMessageCard } from './ExpenseMessageCard';
 import {
   PhotoMessageCard,
@@ -45,13 +45,18 @@ const MEMBER_COLORS = [
   'text-orange-400'
 ];
 
+const memberColorCache = new Map<string, string>();
 const getMemberColor = (name: string = '') => {
+  const cached = memberColorCache.get(name);
+  if (cached) return cached;
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
   const index = Math.abs(hash) % MEMBER_COLORS.length;
-  return MEMBER_COLORS[index];
+  const color = MEMBER_COLORS[index];
+  memberColorCache.set(name, color);
+  return color;
 };
 
 // WhatsApp-style Status Ticks for outgoing messages
@@ -76,7 +81,7 @@ const MessageTicks: React.FC<{ act: any; isSelf: boolean }> = ({ act, isSelf }) 
   return <span className="text-slate-400 font-bold ml-1 text-xs select-none" title="Sent">✓</span>;
 };
 
-export const ActivityFeed: React.FC<ActivityFeedProps> = ({
+const ActivityFeedComponent: React.FC<ActivityFeedProps> = ({
   activities = [],
   expenses = [],
   itinerary = [],
@@ -159,71 +164,118 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
     }
   };
 
-  // Build combined chronological items list
-  const combinedStream: any[] = [];
-  const processedKeys = new Set<string>();
+  // Precomputed lookup Maps for O(1) instantaneous entity resolution (eliminates O(N*M) linear scanning during render)
+  const expenseMap = useMemo(() => {
+    const map = new Map<string, any>();
+    expenses.forEach((e) => {
+      if (e?._id) map.set(String(e._id), e);
+    });
+    return map;
+  }, [expenses]);
 
-  // Set of poll IDs that already have an explicit POLL_CREATED activity
-  const pollIdsWithCreatedActivity = new Set(
-    activities
-      .filter((a) => a.type === 'POLL_CREATED')
-      .map((a) => String(a.metadata?.pollId || a.metadata?.poll?._id || ''))
-      .filter(Boolean)
-  );
-  const pollIdsRepresentedInStream = new Set<string>();
+  const docMap = useMemo(() => {
+    const map = new Map<string, any>();
+    documents.forEach((d) => {
+      if (d?._id) map.set(String(d._id), d);
+    });
+    return map;
+  }, [documents]);
 
-  // Add all activity records (excluding split payment and repeated vote activities to update cards in place)
-  activities.forEach((act) => {
-    if (act.type === 'EXPENSE_SPLIT_PAID') {
-      return;
-    }
-    if (act.type === 'POLL_VOTED') {
-      const pId = String(act.metadata?.pollId || act.metadata?.poll?._id || '');
-      // If a POLL_CREATED activity already exists, suppress vote activity from creating separate feed items
-      if (pollIdsWithCreatedActivity.has(pId)) {
+  const itineraryMap = useMemo(() => {
+    const map = new Map<string, any>();
+    itinerary.forEach((it) => {
+      if (it?._id) map.set(String(it._id), it);
+    });
+    return map;
+  }, [itinerary]);
+
+  const bookingMap = useMemo(() => {
+    const map = new Map<string, any>();
+    bookings.forEach((b) => {
+      if (b?._id) map.set(String(b._id), b);
+    });
+    return map;
+  }, [bookings]);
+
+  const taskMap = useMemo(() => {
+    const map = new Map<string, any>();
+    tasks.forEach((t) => {
+      if (t?._id) map.set(String(t._id), t);
+    });
+    return map;
+  }, [tasks]);
+
+  const pollMap = useMemo(() => {
+    const map = new Map<string, any>();
+    polls.forEach((p) => {
+      if (p?._id) map.set(String(p._id), p);
+    });
+    return map;
+  }, [polls]);
+
+  // Memoize stream building, filtering, and date grouping to avoid sorting on every render
+  const { combinedStream, groupedItems } = useMemo(() => {
+    const stream: any[] = [];
+    const processedKeys = new Set<string>();
+
+    const pollIdsWithCreatedActivity = new Set(
+      activities
+        .filter((a) => a.type === 'POLL_CREATED')
+        .map((a) => String(a.metadata?.pollId || a.metadata?.poll?._id || ''))
+        .filter(Boolean)
+    );
+    const pollIdsRepresentedInStream = new Set<string>();
+
+    activities.forEach((act) => {
+      if (act.type === 'EXPENSE_SPLIT_PAID') {
         return;
       }
-      // If historical activities only have POLL_VOTED, keep at most 1 representative entry to render the card
-      if (pId && pollIdsRepresentedInStream.has(pId)) {
-        return;
+      if (act.type === 'POLL_VOTED') {
+        const pId = String(act.metadata?.pollId || act.metadata?.poll?._id || '');
+        if (pollIdsWithCreatedActivity.has(pId)) {
+          return;
+        }
+        if (pId && pollIdsRepresentedInStream.has(pId)) {
+          return;
+        }
+        if (pId) {
+          pollIdsRepresentedInStream.add(pId);
+        }
       }
-      if (pId) {
-        pollIdsRepresentedInStream.add(pId);
+      if (tripId) {
+        const actTripId = String(act.tripId?._id || act.tripId || '').trim();
+        if (actTripId && actTripId !== String(tripId).trim()) {
+          return;
+        }
       }
-    }
-    if (tripId) {
-      const actTripId = String(act.tripId?._id || act.tripId || '').trim();
-      if (actTripId && actTripId !== String(tripId).trim()) {
-        return;
+      const key = `act-${act._id}`;
+      if (!processedKeys.has(key)) {
+        processedKeys.add(key);
+        stream.push({
+          type: 'ACTIVITY',
+          timestamp: new Date(act.createdAt || Date.now()),
+          data: act
+        });
       }
-    }
-    const key = `act-${act._id}`;
-    if (!processedKeys.has(key)) {
-      processedKeys.add(key);
-      combinedStream.push({
-        type: 'ACTIVITY',
-        timestamp: new Date(act.createdAt || Date.now()),
-        data: act
-      });
-    }
-  });
+    });
 
-  // Sort combined stream chronologically (oldest to newest)
-  combinedStream.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    stream.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-  // Group stream items by date header
-  const groupedItems: { dateLabel: string; items: any[] }[] = [];
-  let currentDateLabel = '';
+    const grouped: { dateLabel: string; items: any[] }[] = [];
+    let currentDateLabel = '';
 
-  combinedStream.forEach((item) => {
-    const label = formatDateHeader(item.timestamp);
-    if (label !== currentDateLabel) {
-      currentDateLabel = label;
-      groupedItems.push({ dateLabel: label, items: [item] });
-    } else {
-      groupedItems[groupedItems.length - 1].items.push(item);
-    }
-  });
+    stream.forEach((item) => {
+      const label = formatDateHeader(item.timestamp);
+      if (label !== currentDateLabel) {
+        currentDateLabel = label;
+        grouped.push({ dateLabel: label, items: [item] });
+      } else {
+        grouped[grouped.length - 1].items.push(item);
+      }
+    });
+
+    return { combinedStream: stream, groupedItems: grouped };
+  }, [activities, tripId]);
 
   const renderedExpenseIds = new Set<string>();
   const renderedDocIds = new Set<string>();
@@ -366,10 +418,10 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 );
               }
 
-              // Check for related expense card - MUST resolve against active expenses list
+              // Check for related expense card - fast Map lookup
               const targetExpId = act.metadata?.expenseId || act.metadata?.expense?._id;
               const relatedExpense = targetExpId
-                ? expenses.find((e) => String(e._id) === String(targetExpId))
+                ? expenseMap.get(String(targetExpId)) || null
                 : null;
 
               // If an activity was an expense addition/update but the expense was deleted, omit it completely
@@ -397,7 +449,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 const targetDocId = act.metadata?.documentId || act.metadata?.document?._id;
                 const quoted = extractQuoted(act.description);
                 relatedDoc = targetDocId
-                  ? documents.find((d) => String(d._id) === String(targetDocId))
+                  ? docMap.get(String(targetDocId)) || null
                   : quoted
                   ? documents.find((d) => d.name?.toLowerCase().includes(quoted.toLowerCase()))
                   : null;
@@ -429,7 +481,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 const targetItinId = act.metadata?.itineraryId || act.metadata?.itinerary?._id;
                 const quoted = extractQuoted(act.description);
                 relatedItinerary = targetItinId
-                  ? itinerary.find((it) => String(it._id) === String(targetItinId))
+                  ? itineraryMap.get(String(targetItinId)) || null
                   : quoted
                   ? itinerary.find((it) => it.title?.toLowerCase().includes(quoted.toLowerCase()))
                   : null;
@@ -456,7 +508,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 const targetBookingId = act.metadata?.bookingId || act.metadata?.booking?._id;
                 const quoted = extractQuoted(act.description);
                 relatedBooking = targetBookingId
-                  ? bookings.find((b) => String(b._id) === String(targetBookingId))
+                  ? bookingMap.get(String(targetBookingId)) || null
                   : quoted
                   ? bookings.find((b) => (b.provider && b.provider.toLowerCase().includes(quoted.toLowerCase())) || (b.type && b.type.toLowerCase().includes(quoted.toLowerCase())))
                   : null;
@@ -482,7 +534,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 const targetTaskId = act.metadata?.taskId || act.metadata?.task?._id;
                 const quoted = extractQuoted(act.description);
                 relatedTask = targetTaskId
-                  ? tasks.find((t) => String(t._id) === String(targetTaskId))
+                  ? taskMap.get(String(targetTaskId)) || null
                   : quoted
                   ? tasks.find((t) => t.title?.toLowerCase().includes(quoted.toLowerCase()))
                   : null;
@@ -509,7 +561,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
                 const targetPollId = act.metadata?.pollId || act.metadata?.poll?._id;
                 const quoted = extractQuoted(act.description);
                 relatedPoll = targetPollId
-                  ? polls.find((p) => String(p._id) === String(targetPollId))
+                  ? pollMap.get(String(targetPollId)) || null
                   : quoted
                   ? polls.find((p) => p.question?.toLowerCase().includes(quoted.toLowerCase()))
                   : null;
@@ -786,3 +838,5 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({
     </div>
   );
 };
+
+export const ActivityFeed = React.memo(ActivityFeedComponent);

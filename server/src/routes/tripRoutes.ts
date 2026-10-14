@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import mongoose from 'mongoose';
 import { Trip, TripMember, Expense, Budget, Settlement } from '../models';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import {
@@ -40,28 +41,47 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
 
-    const memberships = await TripMember.find({ userId });
+    const memberships = await TripMember.find({ userId }).select('tripId').lean();
+    if (!memberships || memberships.length === 0) {
+      return res.json({ trips: [] });
+    }
     const tripIds = memberships.map((m) => m.tripId);
+    const tripObjectIds = tripIds.map((id: any) => new mongoose.Types.ObjectId(id));
 
-    const trips = await Trip.find({ _id: { $in: tripIds } }).sort({ startDate: 1 });
+    // Parallel fetch: trips list + grouped member counts + grouped expense totals
+    const [trips, memberCountAgg, expenseTotalAgg] = await Promise.all([
+      Trip.find({ _id: { $in: tripIds } }).sort({ startDate: 1 }),
+      TripMember.aggregate([
+        { $match: { tripId: { $in: tripObjectIds } } },
+        { $group: { _id: '$tripId', count: { $sum: 1 } } }
+      ]),
+      Expense.aggregate([
+        { $match: { tripId: { $in: tripObjectIds } } },
+        { $group: { _id: '$tripId', totalSpent: { $sum: '$amount' } } }
+      ])
+    ]);
 
-    // Enrich trips with counts, spending, and authoritative status
-    const enrichedTrips = await Promise.all(
-      trips.map(async (trip) => {
-        const memberCount = await TripMember.countDocuments({ tripId: trip._id });
-        const expenses = await Expense.find({ tripId: trip._id });
-        const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
-
-        const currentStatus = resolveTripStatus(trip);
-
-        return {
-          ...trip.toObject(),
-          memberCount,
-          totalSpent,
-          status: currentStatus
-        };
-      })
+    const memberCountMap = new Map<string, number>(
+      memberCountAgg.map((m: any) => [m._id.toString(), Number(m.count) || 0])
     );
+    const expenseTotalMap = new Map<string, number>(
+      expenseTotalAgg.map((e: any) => [e._id.toString(), Number(e.totalSpent) || 0])
+    );
+
+    // Enrich trips with pre-aggregated counts, spending, and authoritative status
+    const enrichedTrips = trips.map((trip) => {
+      const tIdStr = trip._id.toString();
+      const memberCount = memberCountMap.get(tIdStr) || 0;
+      const totalSpent = expenseTotalMap.get(tIdStr) || 0;
+      const currentStatus = resolveTripStatus(trip);
+
+      return {
+        ...trip.toObject(),
+        memberCount,
+        totalSpent,
+        status: currentStatus
+      };
+    });
 
     res.json({ trips: enrichedTrips });
   } catch (error: any) {
@@ -156,13 +176,19 @@ router.get(
         return res.status(404).json({ error: 'Trip not found' });
       }
 
-      const members = await TripMember.find({ tripId: trip._id }).populate(
-        'userId',
-        'name email avatar'
-      );
-      const expenses = await Expense.find({ tripId: trip._id });
-      const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
-      const budgetDoc = await Budget.findOne({ tripId: trip._id });
+      const tripObjectId = new mongoose.Types.ObjectId(trip._id);
+      const [members, expenseSumAgg, budgetDoc] = await Promise.all([
+        TripMember.find({ tripId: trip._id }).populate(
+          'userId',
+          'name email avatar'
+        ),
+        Expense.aggregate([
+          { $match: { tripId: tripObjectId } },
+          { $group: { _id: null, totalSpent: { $sum: '$amount' } } }
+        ]),
+        Budget.findOne({ tripId: trip._id })
+      ]);
+      const totalSpent = expenseSumAgg[0]?.totalSpent || 0;
 
       const status = resolveTripStatus(trip);
 

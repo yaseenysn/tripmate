@@ -80,6 +80,7 @@ const TripMemberSchema = new Schema<ITripMember>({
 });
 
 TripMemberSchema.index({ tripId: 1, userId: 1 }, { unique: true });
+TripMemberSchema.index({ userId: 1 });
 
 export const TripMember = mongoose.model<ITripMember>('TripMember', TripMemberSchema);
 
@@ -109,6 +110,8 @@ const TripInviteSchema = new Schema<ITripInvite>({
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now }
 });
+
+TripInviteSchema.index({ tripId: 1, isActive: 1 });
 
 export const TripInvite = mongoose.model<ITripInvite>('TripInvite', TripInviteSchema);
 
@@ -159,6 +162,8 @@ const ExpenseSchema = new Schema<IExpense>({
   receiptPublicId: { type: String },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
+
+ExpenseSchema.index({ tripId: 1, date: -1, createdAt: -1 });
 
 export const Expense = mongoose.model<IExpense>('Expense', ExpenseSchema);
 
@@ -212,6 +217,9 @@ const SettlementSchema = new Schema<ISettlement>({
   reference: { type: String, default: '' }
 }, { timestamps: true });
 
+SettlementSchema.index({ tripId: 1, status: 1 });
+SettlementSchema.index({ tripId: 1, createdAt: -1 });
+
 export const Settlement = mongoose.model<ISettlement>('Settlement', SettlementSchema);
 
 // 8. ItineraryItem
@@ -245,6 +253,8 @@ const ItineraryItemSchema = new Schema<IItineraryItem>({
   notes: { type: String, default: '' },
   order: { type: Number, default: 0 }
 }, { timestamps: true });
+
+ItineraryItemSchema.index({ tripId: 1, dayNumber: 1, order: 1 });
 
 export const ItineraryItem = mongoose.model<IItineraryItem>('ItineraryItem', ItineraryItemSchema);
 
@@ -284,6 +294,8 @@ const BookingSchema = new Schema<IBooking>({
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
 
+BookingSchema.index({ tripId: 1, date: 1 });
+
 export const Booking = mongoose.model<IBooking>('Booking', BookingSchema);
 
 // 10. Document
@@ -312,6 +324,8 @@ const DocumentSchema = new Schema<IDocument>({
   uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
 
+DocumentSchema.index({ tripId: 1, createdAt: -1 });
+
 export const DocumentModel = mongoose.model<IDocument>('Document', DocumentSchema);
 
 // 11. Task
@@ -337,6 +351,8 @@ const TaskSchema = new Schema<ITask>({
   status: { type: String, enum: ['TODO', 'IN_PROGRESS', 'DONE'], default: 'TODO' },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
+
+TaskSchema.index({ tripId: 1, createdAt: -1 });
 
 export const Task = mongoose.model<ITask>('Task', TaskSchema);
 
@@ -365,6 +381,8 @@ const PollSchema = new Schema<IPoll>({
   isClosed: { type: Boolean, default: false }
 }, { timestamps: true });
 
+PollSchema.index({ tripId: 1, createdAt: -1 });
+
 export const Poll = mongoose.model<IPoll>('Poll', PollSchema);
 
 export interface IPollVote extends Document {
@@ -383,6 +401,7 @@ const PollVoteSchema = new Schema<IPollVote>({
 }, { timestamps: true });
 
 PollVoteSchema.index({ pollId: 1, userId: 1 }, { unique: true });
+PollVoteSchema.index({ tripId: 1 });
 
 export const PollVote = mongoose.model<IPollVote>('PollVote', PollVoteSchema);
 
@@ -408,6 +427,8 @@ const ActivitySchema = new Schema<IActivity>({
   readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
 
+ActivitySchema.index({ tripId: 1, createdAt: 1 });
+
 export const Activity = mongoose.model<IActivity>('Activity', ActivitySchema);
 
 // 14. Notification
@@ -431,5 +452,7 @@ const NotificationSchema = new Schema<INotification>({
   isRead: { type: Boolean, default: false },
   link: { type: String }
 }, { timestamps: true });
+
+NotificationSchema.index({ userId: 1, createdAt: -1 });
 
 export const Notification = mongoose.model<INotification>('Notification', NotificationSchema);

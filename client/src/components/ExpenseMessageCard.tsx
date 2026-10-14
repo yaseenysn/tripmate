@@ -14,7 +14,7 @@ interface ExpenseMessageCardProps {
   onPaySplit?: (expense: any, userShare: number, payerName: string, e: React.MouseEvent) => void;
 }
 
-export const ExpenseMessageCard: React.FC<ExpenseMessageCardProps> = ({
+const ExpenseMessageCardComponent: React.FC<ExpenseMessageCardProps> = ({
   expense,
   members,
   currentUser,
@@ -26,7 +26,9 @@ export const ExpenseMessageCard: React.FC<ExpenseMessageCardProps> = ({
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Bind outside click listener ONLY when menu is active to avoid global event overhead
   useEffect(() => {
+    if (!showMenu) return;
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setShowMenu(false);
@@ -34,7 +36,7 @@ export const ExpenseMessageCard: React.FC<ExpenseMessageCardProps> = ({
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [showMenu]);
 
   const payer = expense.paidBy || {};
   const payerId = String(payer._id || payer);
@@ -259,3 +261,5 @@ export const ExpenseMessageCard: React.FC<ExpenseMessageCardProps> = ({
     </div>
   );
 };
+
+export const ExpenseMessageCard = React.memo(ExpenseMessageCardComponent);

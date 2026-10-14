@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { WhatsAppHeader } from './components/WhatsAppHeader';
 import { TripListView } from './components/TripListView';
 import { TripWorkspaceHeader } from './components/TripWorkspaceHeader';
@@ -1239,6 +1239,23 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSelectExpenseFromFeed = useCallback((exp: any) => {
+    setSelectedExpense(exp);
+  }, []);
+
+  const handleEditExpenseFromFeed = useCallback((exp: any) => {
+    setExpenseToEdit(exp);
+    setShowAddEditExpenseModal(true);
+  }, []);
+
+  const handlePayExpenseSplitFromFeed = useCallback((exp: any, userShare: number, payerName: string) => {
+    setPaySplitInfo({ expense: exp, userShare, payerName });
+  }, []);
+
+  const handleNavigateSectionFromFeed = useCallback((sec: string) => {
+    setActiveSection(sec);
+  }, []);
+
   const handleVotePoll = async (pollId: string, optionId: string) => {
     if (!activeTripId) return;
     try {
@@ -1538,18 +1555,13 @@ export const App: React.FC = () => {
                         documents={documents}
                         members={members}
                         currentUser={user}
-                        onSelectExpense={(exp) => setSelectedExpense(exp)}
-                        onEditExpense={(exp) => {
-                          setExpenseToEdit(exp);
-                          setShowAddEditExpenseModal(true);
-                        }}
+                        onSelectExpense={handleSelectExpenseFromFeed}
+                        onEditExpense={handleEditExpenseFromFeed}
                         onDeleteExpense={handleDeleteExpense}
-                        onPayExpenseSplit={(exp, userShare, payerName) => {
-                          setPaySplitInfo({ expense: exp, userShare, payerName });
-                        }}
+                        onPayExpenseSplit={handlePayExpenseSplitFromFeed}
                         onVotePoll={handleVotePoll}
                         onToggleTaskStatus={handleToggleTaskStatus}
-                        onNavigateSection={(sec) => setActiveSection(sec)}
+                        onNavigateSection={handleNavigateSectionFromFeed}
                       />
                       {/* WhatsApp Chat Composer fixed at bottom of chat */}
                       <WhatsAppComposer

@@ -16,7 +16,7 @@ export interface PhotoMessageCardProps {
   onOpenPreview: (photo: { url: string; title: string; uploader?: string; date?: any; size?: string }) => void;
 }
 
-export const PhotoMessageCard: React.FC<PhotoMessageCardProps> = ({
+const PhotoMessageCardComponent: React.FC<PhotoMessageCardProps> = ({
   document: doc,
   timestamp,
   onOpenPreview,
@@ -108,6 +108,8 @@ export const PhotoMessageCard: React.FC<PhotoMessageCardProps> = ({
   );
 };
 
+export const PhotoMessageCard = React.memo(PhotoMessageCardComponent);
+
 // ============================================================================
 // 2. DOCUMENT MESSAGE CARD
 // ============================================================================
@@ -116,7 +118,7 @@ export interface DocumentMessageCardProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const DocumentMessageCard: React.FC<DocumentMessageCardProps> = ({
+const DocumentMessageCardComponent: React.FC<DocumentMessageCardProps> = ({
   document: doc,
   onNavigateSection,
 }) => {
@@ -190,6 +192,8 @@ export const DocumentMessageCard: React.FC<DocumentMessageCardProps> = ({
   );
 };
 
+export const DocumentMessageCard = React.memo(DocumentMessageCardComponent);
+
 // ============================================================================
 // 3. ITINERARY MESSAGE CARD
 // ============================================================================
@@ -198,7 +202,7 @@ export interface ItineraryMessageCardProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const ItineraryMessageCard: React.FC<ItineraryMessageCardProps> = ({
+const ItineraryMessageCardComponent: React.FC<ItineraryMessageCardProps> = ({
   item,
   onNavigateSection,
 }) => {
@@ -253,6 +257,8 @@ export const ItineraryMessageCard: React.FC<ItineraryMessageCardProps> = ({
   );
 };
 
+export const ItineraryMessageCard = React.memo(ItineraryMessageCardComponent);
+
 // ============================================================================
 // 4. BOOKING MESSAGE CARD
 // ============================================================================
@@ -261,7 +267,7 @@ export interface BookingMessageCardProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const BookingMessageCard: React.FC<BookingMessageCardProps> = ({
+const BookingMessageCardComponent: React.FC<BookingMessageCardProps> = ({
   booking,
   onNavigateSection,
 }) => {
@@ -313,6 +319,8 @@ export const BookingMessageCard: React.FC<BookingMessageCardProps> = ({
   );
 };
 
+export const BookingMessageCard = React.memo(BookingMessageCardComponent);
+
 // ============================================================================
 // 5. TASK MESSAGE CARD
 // ============================================================================
@@ -322,7 +330,7 @@ export interface TaskMessageCardProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const TaskMessageCard: React.FC<TaskMessageCardProps> = ({
+const TaskMessageCardComponent: React.FC<TaskMessageCardProps> = ({
   task,
   onToggleStatus,
   onNavigateSection,
@@ -412,6 +420,8 @@ export const TaskMessageCard: React.FC<TaskMessageCardProps> = ({
   );
 };
 
+export const TaskMessageCard = React.memo(TaskMessageCardComponent);
+
 // ============================================================================
 // 6. POLL MESSAGE CARD
 // ============================================================================
@@ -422,7 +432,7 @@ export interface PollMessageCardProps {
   onNavigateSection?: (section: string) => void;
 }
 
-export const PollMessageCard: React.FC<PollMessageCardProps> = ({
+const PollMessageCardComponent: React.FC<PollMessageCardProps> = ({
   poll,
   currentUserId,
   onVotePoll,
@@ -565,3 +575,5 @@ export const PollMessageCard: React.FC<PollMessageCardProps> = ({
     </div>
   );
 };
+
+export const PollMessageCard = React.memo(PollMessageCardComponent);
