@@ -113,6 +113,12 @@ router.post('/:id/polls/:pollId/vote', authenticateToken, requireTripMembership,
       return res.status(400).json({ error: 'This poll is closed' });
     }
 
+    // Validate option exists on poll
+    const optionExists = poll.options.some((opt: any) => opt._id.toString() === optionId);
+    if (!optionExists) {
+      return res.status(400).json({ error: 'Invalid poll option' });
+    }
+
     // Upsert vote (1 vote per user)
     await PollVote.findOneAndUpdate(
       { pollId, userId },
@@ -120,10 +126,61 @@ router.post('/:id/polls/:pollId/vote', authenticateToken, requireTripMembership,
       { upsert: true, new: true }
     );
 
-    await logActivity(tripId, userId, 'POLL_VOTED', `voted on poll "${poll.question}"`);
-    emitToTrip(tripId, 'poll.voted', { pollId, userId, optionId });
+    // Compute updated poll options and vote counts for in-place UI update (like WhatsApp)
+    const pollVotes = await PollVote.find({ pollId }).populate('userId', 'name avatar');
+    const totalVotes = pollVotes.length;
 
-    res.json({ message: 'Vote recorded successfully' });
+    const optionsWithCount = poll.options.map((opt: any) => {
+      const optIdStr = opt._id.toString();
+      const optVotes = pollVotes.filter(v => v.optionId === optIdStr);
+      const count = optVotes.length;
+      const percentage = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+      const voters = optVotes.map(v => v.userId);
+
+      return {
+        _id: optIdStr,
+        text: opt.text,
+        voteCount: count,
+        percentage,
+        voters
+      };
+    });
+
+    const populatedPoll = await Poll.findById(pollId).populate('createdBy', 'name avatar');
+
+    const updatedPoll = {
+      _id: poll._id,
+      tripId: poll.tripId,
+      question: poll.question,
+      options: optionsWithCount,
+      createdBy: populatedPoll?.createdBy || poll.createdBy,
+      isClosed: poll.isClosed,
+      createdAt: poll.createdAt,
+      totalVotes,
+      votes: pollVotes.map(v => ({
+        _id: v._id,
+        userId: v.userId,
+        optionId: v.optionId
+      }))
+    };
+
+    // Real-time broadcast: update existing poll card in place for all members.
+    // Voting is an update to the poll, NOT a new chat message - DO NOT call logActivity.
+    emitToTrip(tripId, 'poll.voted', {
+      tripId,
+      pollId,
+      userId,
+      optionId,
+      poll: updatedPoll
+    });
+
+    res.json({
+      message: 'Vote recorded successfully',
+      poll: {
+        ...updatedPoll,
+        userVotedOptionId: optionId
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Error voting on poll' });
   }

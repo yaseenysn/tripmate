@@ -236,7 +236,7 @@ const runTests = async () => {
       fail('Test 6: Poll activity missing poll options metadata');
     }
 
-    // 7. POLL VOTE Activity: Updates vote without creating duplicate poll card
+    // 7. POLL VOTE (WhatsApp Style): Updates vote without creating duplicate poll card or chat Activity record
     const firstOptionId = (poll.options[0] as any)?._id?.toString() || '';
     const vote = await PollVote.create({
       pollId: poll._id,
@@ -244,23 +244,20 @@ const runTests = async () => {
       tripId: trip._id,
       optionId: firstOptionId
     });
-    const voteAct = await logActivity(
-      tripIdStr,
-      userIdStr,
-      'POLL_VOTED',
-      `voted on poll "${poll.question}"`,
-      { pollId: poll._id, optionId: firstOptionId }
-    );
+    // Voting is an update to the poll, NOT a new message - verify NO Activity record is created
+    const voteActCount = await Activity.countDocuments({
+      tripId: trip._id,
+      type: 'POLL_VOTED'
+    });
     if (
       vote &&
-      voteAct &&
-      voteAct.type === 'POLL_VOTED' &&
-      voteAct.metadata?.pollId?.toString() === poll._id.toString()
+      vote.optionId === firstOptionId &&
+      voteActCount === 0
     ) {
-      pass('Test 7: Poll vote records correctly and associates with poll without duplicate cards');
+      pass('Test 7: Poll vote records correctly in PollVote without creating chat Activity records (WhatsApp style)');
       testPassed++;
     } else {
-      fail('Test 7: Poll vote record failed');
+      fail('Test 7: Poll vote record failed or created unwanted Activity record');
     }
 
     // 8. MEMBER JOINED System Message: Includes actual member name

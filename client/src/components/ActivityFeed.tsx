@@ -227,20 +227,9 @@ const ActivityFeedComponent: React.FC<ActivityFeedProps> = ({
     const pollIdsRepresentedInStream = new Set<string>();
 
     activities.forEach((act) => {
-      if (act.type === 'EXPENSE_SPLIT_PAID') {
+      // Poll votes and split payments are state updates, NOT separate chat messages (WhatsApp style)
+      if (act.type === 'EXPENSE_SPLIT_PAID' || act.type === 'POLL_VOTED') {
         return;
-      }
-      if (act.type === 'POLL_VOTED') {
-        const pId = String(act.metadata?.pollId || act.metadata?.poll?._id || '');
-        if (pollIdsWithCreatedActivity.has(pId)) {
-          return;
-        }
-        if (pId && pollIdsRepresentedInStream.has(pId)) {
-          return;
-        }
-        if (pId) {
-          pollIdsRepresentedInStream.add(pId);
-        }
       }
       if (tripId) {
         const actTripId = String(act.tripId?._id || act.tripId || '').trim();
@@ -595,13 +584,9 @@ const ActivityFeedComponent: React.FC<ActivityFeedProps> = ({
                 (taskIdStr && renderedTaskIds.has(taskIdStr)) ||
                 (pollIdStr && renderedPollIds.has(pollIdStr));
 
-              // Suppress poll vote activities from appending system pills to the chat
+              // Suppress poll vote activities from appending system pills or chat bubbles to the chat
               if (actType === 'POLL_VOTED') {
-                if (!renderedPollIds.has(pollIdStr) && relatedPoll) {
-                  // If the poll card hasn't been rendered yet, let it proceed to render PollMessageCard
-                } else {
-                  return null;
-                }
+                return null;
               }
 
               if ((isUpdateActivity || isDuplicateCard) && (relatedPoll || relatedTask || relatedItinerary || relatedBooking || relatedDoc) && !shouldRenderExpenseCard) {

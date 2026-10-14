@@ -839,8 +839,57 @@ export const App: React.FC = () => {
         const activeId = String(activeTripIdRef.current || '').trim();
         if (targetTripId && activeId && targetTripId !== activeId) return;
 
-        if (activeId) {
-          bumpSectionVersion(activeId, 'polls');
+        if (!activeId) return;
+
+        const pId = String(payload?.pollId || payload?.poll?._id || '').trim();
+        bumpSectionVersion(activeId, 'polls');
+
+        if (payload?.poll && pId) {
+          const updatedPollData = payload.poll;
+          const currentUid = String(user?._id || user?.id || '');
+
+          setPolls((prev) =>
+            prev.map((p) => {
+              if (String(p._id) !== pId) return p;
+
+              let userVotedOptionId = p.userVotedOptionId;
+              if (String(payload.userId) === currentUid) {
+                userVotedOptionId = payload.optionId;
+              } else if (Array.isArray(updatedPollData.votes) && currentUid) {
+                const found = updatedPollData.votes.find(
+                  (v: any) => String(v.userId?._id || v.userId) === currentUid
+                );
+                userVotedOptionId = found ? found.optionId : null;
+              }
+
+              return {
+                ...p,
+                ...updatedPollData,
+                userVotedOptionId
+              };
+            })
+          );
+
+          updateTripCacheItem(activeId, 'polls', (prev = []) =>
+            prev.map((p: any) => {
+              if (String(p._id) !== pId) return p;
+              let userVotedOptionId = p.userVotedOptionId;
+              if (String(payload.userId) === currentUid) {
+                userVotedOptionId = payload.optionId;
+              } else if (Array.isArray(updatedPollData.votes) && currentUid) {
+                const found = updatedPollData.votes.find(
+                  (v: any) => String(v.userId?._id || v.userId) === currentUid
+                );
+                userVotedOptionId = found ? found.optionId : null;
+              }
+              return {
+                ...p,
+                ...updatedPollData,
+                userVotedOptionId
+              };
+            })
+          );
+        } else {
           refreshSection(activeId, 'polls');
         }
       };
@@ -1256,16 +1305,73 @@ export const App: React.FC = () => {
     setActiveSection(sec);
   }, []);
 
-  const handleVotePoll = async (pollId: string, optionId: string) => {
-    if (!activeTripId) return;
-    try {
+  const handleVotePoll = useCallback(
+    async (pollId: string, optionId: string) => {
+      if (!activeTripId) return;
+
+      // 1. Optimistic UI update: update the poll card in place immediately (0ms delay)
       bumpSectionVersion(activeTripId, 'polls');
-      await apiVotePoll(activeTripId, pollId, optionId);
-      await refreshSection(activeTripId, 'polls');
-    } catch (err: any) {
-      console.error('Failed to vote on poll:', err);
-    }
-  };
+      setPolls((prev) =>
+        prev.map((p) => {
+          if (String(p._id) !== String(pollId)) return p;
+          const prevVotedOptionId = p.userVotedOptionId;
+          const isChangingVote = prevVotedOptionId && prevVotedOptionId !== optionId;
+          const isSameVote = prevVotedOptionId === optionId;
+          if (isSameVote) return p;
+
+          const nextOptions = (p.options || []).map((opt: any) => {
+            let count = opt.voteCount ?? opt.votes?.length ?? 0;
+            if (String(opt._id) === String(optionId)) {
+              count += 1;
+            } else if (isChangingVote && String(opt._id) === String(prevVotedOptionId)) {
+              count = Math.max(0, count - 1);
+            }
+            return { ...opt, voteCount: count };
+          });
+
+          const nextTotalVotes = (p.totalVotes || 0) + (isChangingVote ? 0 : 1);
+          const optionsWithPercentage = nextOptions.map((opt: any) => ({
+            ...opt,
+            percentage: nextTotalVotes > 0 ? Math.round((opt.voteCount / nextTotalVotes) * 100) : 0
+          }));
+
+          return {
+            ...p,
+            options: optionsWithPercentage,
+            totalVotes: nextTotalVotes,
+            userVotedOptionId: optionId
+          };
+        })
+      );
+
+      // 2. Persistent API call in background
+      try {
+        const res = await apiVotePoll(activeTripId, pollId, optionId);
+        if (res?.poll) {
+          setPolls((prev) =>
+            prev.map((p) =>
+              String(p._id) === String(pollId)
+                ? { ...p, ...res.poll, userVotedOptionId: optionId }
+                : p
+            )
+          );
+          updateTripCacheItem(activeTripId, 'polls', (prev = []) =>
+            prev.map((p: any) =>
+              String(p._id) === String(pollId)
+                ? { ...p, ...res.poll, userVotedOptionId: optionId }
+                : p
+            )
+          );
+        } else {
+          await refreshSection(activeTripId, 'polls');
+        }
+      } catch (err: any) {
+        console.error('Failed to vote on poll:', err);
+        refreshSection(activeTripId, 'polls', true);
+      }
+    },
+    [activeTripId]
+  );
 
   const handleToggleTaskStatus = async (taskId: string, currentStatus: string) => {
     if (!activeTripId) return;
