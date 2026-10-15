@@ -350,6 +350,113 @@ export const TripFinalReportModal: React.FC<TripFinalReportModalProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Budget & Spending Analysis Card */}
+                {(() => {
+                  const estimatedBudget = Number(trip?.estimatedBudget) || 0;
+                  const totalSpent = Number(overview?.totalExpenses) || 0;
+                  const hasBudget = estimatedBudget > 0;
+                  const remainingBudget = hasBudget ? estimatedBudget - totalSpent : 0;
+                  const budgetUtilization = hasBudget ? Math.round((totalSpent / estimatedBudget) * 1000) / 10 : 0;
+                  const isOverBudget = hasBudget && remainingBudget < 0;
+
+                  return (
+                    <div className="bg-[#111b21] p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Wallet className="w-4 h-4 text-emerald-400" />
+                          <span className="text-xs font-bold text-white uppercase tracking-wider">
+                            Budget & Spending Analysis
+                          </span>
+                        </div>
+                        {hasBudget ? (
+                          <span
+                            className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                              isOverBudget
+                                ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            }`}
+                          >
+                            {isOverBudget ? 'Over Budget' : 'Within Budget'}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 font-medium italic">
+                            No Budget Configured
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                        <div className="bg-[#1a2329] p-2.5 rounded-xl border border-slate-800">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Estimated Budget</span>
+                          <span className="text-xs sm:text-sm font-extrabold text-white">
+                            {hasBudget ? formatCurr(estimatedBudget) : 'Not Configured'}
+                          </span>
+                        </div>
+
+                        <div className="bg-[#1a2329] p-2.5 rounded-xl border border-slate-800">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Spent</span>
+                          <span className="text-xs sm:text-sm font-extrabold text-white">
+                            {formatCurr(totalSpent)}
+                          </span>
+                        </div>
+
+                        <div className="bg-[#1a2329] p-2.5 rounded-xl border border-slate-800">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Remaining Budget</span>
+                          <span
+                            className={`text-xs sm:text-sm font-extrabold ${
+                              !hasBudget
+                                ? 'text-slate-400'
+                                : isOverBudget
+                                ? 'text-rose-400'
+                                : 'text-emerald-400'
+                            }`}
+                          >
+                            {hasBudget
+                              ? `${remainingBudget < 0 ? '-' : ''}${formatCurr(Math.abs(remainingBudget))}`
+                              : 'N/A'}
+                          </span>
+                        </div>
+
+                        <div className="bg-[#1a2329] p-2.5 rounded-xl border border-slate-800">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Utilization</span>
+                          <span
+                            className={`text-xs sm:text-sm font-extrabold ${
+                              !hasBudget
+                                ? 'text-slate-400'
+                                : isOverBudget
+                                ? 'text-rose-400'
+                                : 'text-emerald-400'
+                            }`}
+                          >
+                            {hasBudget ? `${budgetUtilization.toFixed(1)}%` : 'N/A'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {hasBudget && (
+                        <div className="space-y-1 pt-0.5">
+                          <div className="w-full bg-[#1a2329] rounded-full h-1.5 overflow-hidden border border-slate-800">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                isOverBudget ? 'bg-rose-500' : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.min(100, budgetUtilization)}%` }}
+                            />
+                          </div>
+                          <p className="text-[9.5px] text-slate-400 flex items-center justify-between">
+                            <span>{budgetUtilization.toFixed(1)}% of estimated budget used</span>
+                            <span className={isOverBudget ? 'text-rose-400 font-semibold' : 'text-emerald-400'}>
+                              {isOverBudget
+                                ? `Over by ${formatCurr(Math.abs(remainingBudget))}`
+                                : `${formatCurr(remainingBudget)} remaining`}
+                            </span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* SECTION B: EXPENSE BREAKDOWN */}

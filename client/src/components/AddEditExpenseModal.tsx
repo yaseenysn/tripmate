@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, DollarSign, Tag, User, Users, Percent, Check, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
+import { X, DollarSign, Tag, User, Users, Percent, Check, Upload, Loader2, Image as ImageIcon, Lock } from 'lucide-react';
 import { apiCreateExpense, apiUpdateExpense, apiUploadFile } from '../services/api';
 
 interface AddEditExpenseModalProps {
@@ -266,23 +266,61 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
           </div>
 
           {/* Paid By */}
-          <div>
-            <label className="block text-[11px] font-bold text-slate-300 uppercase mb-1">Paid By</label>
-            <select
-              value={paidBy}
-              onChange={(e) => setPaidBy(e.target.value)}
-              className="w-full bg-[#202c33] border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-emerald-500 font-semibold"
-            >
-              {members.map((m) => {
-                const u = m.user || m.userId || {};
-                return (
-                  <option key={u._id} value={u._id}>
-                    {u.name || 'Member'} ({u._id === currentUser?._id ? 'You' : u.email})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
+          {(() => {
+            const hasConfirmedSplitPayments = Boolean(
+              isEditMode &&
+              expenseToEdit?.participants?.some((p: any) => {
+                const pUserId = String(p.userId?._id || p.userId || '');
+                const payerId = String(expenseToEdit.paidBy?._id || expenseToEdit.paidBy || '');
+                if (pUserId === payerId) return false;
+                const paid = p.paidAmount !== undefined ? Number(p.paidAmount) : (p.status === 'PAID' ? Number(p.share || 0) : 0);
+                return paid > 0;
+              })
+            );
+
+            return (
+              <div className="bg-[#182229] p-3 rounded-2xl border border-slate-700/80 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-200 uppercase flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Who Paid for this Expense?</span>
+                  </label>
+                  {hasConfirmedSplitPayments ? (
+                    <span className="text-[10px] text-amber-400 font-semibold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <Lock className="w-2.5 h-2.5" />
+                      <span>Payer Locked (Payments Received)</span>
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 font-semibold">
+                      {String(paidBy) === String(currentUser?._id) ? 'Paid by You' : 'Paid by other member'}
+                    </span>
+                  )}
+                </div>
+
+                <select
+                  value={String(paidBy || '')}
+                  onChange={(e) => setPaidBy(e.target.value)}
+                  disabled={hasConfirmedSplitPayments}
+                  className={`w-full bg-[#202c33] border rounded-xl px-3.5 py-2.5 text-slate-100 font-semibold focus:outline-none transition-colors ${
+                    hasConfirmedSplitPayments
+                      ? 'border-slate-800 opacity-70 cursor-not-allowed text-slate-400'
+                      : 'border-slate-700/80 focus:border-emerald-500'
+                  }`}
+                >
+                  {members.map((m) => {
+                    const u = m.user || m.userId || {};
+                    const uId = String(u._id || u.id || '');
+                    const isCurrent = uId === String(currentUser?._id);
+                    return (
+                      <option key={uId} value={uId}>
+                        {u.name || 'Member'} {isCurrent ? '(You)' : `(${u.email || 'Member'})`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            );
+          })()}
 
           {/* Split Type Selector */}
           <div>

@@ -85,7 +85,7 @@ export interface TripReportData {
   generatedAt: string;
 }
 
-export const generateTripReportPDF = (data: TripReportData) => {
+export const createTripReportPDFDoc = (data: TripReportData): jsPDF => {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -284,6 +284,78 @@ export const generateTripReportPDF = (data: TripReportData) => {
 
   y += 22;
 
+  // Budget Metrics Summary Row
+  const estimatedBudget = Number(data.trip.estimatedBudget) || 0;
+  const totalSpent = Number(data.overview.totalExpenses) || 0;
+  const hasBudget = estimatedBudget > 0;
+  const remainingBudget = hasBudget ? estimatedBudget - totalSpent : 0;
+  const budgetUtilization = hasBudget ? Math.round((totalSpent / estimatedBudget) * 1000) / 10 : 0;
+
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(margin, y, pageWidth - 2 * margin, 13, 2, 2, 'FD');
+
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('BUDGET SUMMARY', margin + 3, y + 4.2);
+
+  doc.setFontSize(7.5);
+  const col1X = margin + 3;
+  const col2X = margin + 46;
+  const col3X = margin + 92;
+  const col4X = margin + 138;
+
+  // Col 1: Budget
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Estimated Budget:', col1X, y + 9.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(hasBudget ? formatMoney(estimatedBudget) : 'Not Configured', col1X + 23, y + 9.5);
+
+  // Col 2: Total Spent
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Total Spent:', col2X, y + 9.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(formatMoney(totalSpent), col2X + 16, y + 9.5);
+
+  // Col 3: Remaining Budget
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Remaining:', col3X, y + 9.5);
+  doc.setFont('helvetica', 'bold');
+  if (hasBudget) {
+    if (remainingBudget >= 0) {
+      doc.setTextColor(21, 128, 61);
+      doc.text(formatMoney(remainingBudget), col3X + 15, y + 9.5);
+    } else {
+      doc.setTextColor(225, 29, 72);
+      doc.text(`-${formatMoney(Math.abs(remainingBudget))} (Over)`, col3X + 15, y + 9.5);
+    }
+  } else {
+    doc.setTextColor(100, 116, 139);
+    doc.text('N/A', col3X + 15, y + 9.5);
+  }
+
+  // Col 4: Budget Utilization
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Utilization:', col4X, y + 9.5);
+  doc.setFont('helvetica', 'bold');
+  if (hasBudget) {
+    const isOver = budgetUtilization > 100;
+    doc.setTextColor(isOver ? 225 : 21, isOver ? 29 : 128, isOver ? 72 : 61);
+    doc.text(`${budgetUtilization.toFixed(1)}%${isOver ? ' (Over)' : ''}`, col4X + 15, y + 9.5);
+  } else {
+    doc.setTextColor(100, 116, 139);
+    doc.text('N/A', col4X + 15, y + 9.5);
+  }
+
+  y += 17;
+
   // Per-Member Expense Subtitle / Explanation
   if (data.overview.perMemberExpenseCalculationText) {
     doc.setFontSize(7.5);
@@ -372,13 +444,16 @@ export const generateTripReportPDF = (data: TripReportData) => {
 
   renderMemberHeader();
 
+  const maxContentWidth = pageWidth - 2 * margin - 6;
+
   data.memberBalances.forEach((mb, idx) => {
-    if (checkPageBreak(13)) {
+    // Each member card needs ~17mm height
+    if (checkPageBreak(18)) {
       renderMemberHeader();
     }
     if (idx % 2 === 1) {
       doc.setFillColor(248, 250, 252);
-      doc.rect(margin, y, pageWidth - 2 * margin, 12, 'F');
+      doc.rect(margin, y, pageWidth - 2 * margin, 15.5, 'F');
     }
 
     doc.setFontSize(8);
@@ -405,20 +480,31 @@ export const generateTripReportPDF = (data: TripReportData) => {
       doc.text('Settled (0.00)', margin + 162, y + 4.5);
     }
 
-    // Explicit Arithmetic Line underneath
-    doc.setFontSize(6.7);
+    // Line 2: Explicit Arithmetic Equation (separated line with maxWidth constraint)
+    doc.setFontSize(6.8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 116, 139);
-    const eq = `Amount Paid (${formatMoney(mb.totalPaid)}) - Actual Share (${formatMoney(mb.totalShare)}) + Confirmed Paid (${formatMoney(mb.settlementsPaid)}) - Confirmed Recv (${formatMoney(mb.settlementsReceived)}) = Final Balance (${formatMoney(mb.netBalance)})`;
+    const eq = `Arithmetic: Amount Paid (${formatMoney(mb.totalPaid)}) - Actual Share (${formatMoney(mb.totalShare)}) + Confirmed Paid (${formatMoney(mb.settlementsPaid)}) - Confirmed Recv (${formatMoney(mb.settlementsReceived)}) = Final Balance (${formatMoney(mb.netBalance)})`;
+    doc.text(eq, margin + 3, y + 8.8, { maxWidth: maxContentWidth });
+
+    // Line 3: Net Balance Outcome (separated line with bold outcome text)
     const outcomeText = isPositive
-      ? `Result: Needs to receive ${formatMoney(mb.netBalance)}`
+      ? `Result: Needs to receive ${formatMoney(mb.netBalance)} to resolve balance`
       : isNegative
-      ? `Result: Needs to pay ${formatMoney(Math.abs(mb.netBalance))}`
-      : 'Result: Fully settled (Rs. 0.00)';
+      ? `Result: Needs to pay ${formatMoney(Math.abs(mb.netBalance))} to resolve balance`
+      : 'Result: Fully settled (Rs. 0.00 balance)';
 
-    doc.text(`Arithmetic: ${eq}  •  ${outcomeText}`, margin + 3, y + 9.5);
+    doc.setFont('helvetica', 'bold');
+    if (isPositive) {
+      doc.setTextColor(21, 128, 61);
+    } else if (isNegative) {
+      doc.setTextColor(225, 29, 72);
+    } else {
+      doc.setTextColor(71, 85, 105);
+    }
+    doc.text(outcomeText, margin + 3, y + 13, { maxWidth: maxContentWidth });
 
-    y += 12;
+    y += 16.5;
   });
 
   y += 5;
@@ -575,17 +661,35 @@ export const generateTripReportPDF = (data: TripReportData) => {
     y + 15
   );
 
-  // Footer on current page
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(148, 163, 184);
-  doc.text(
-    `TripMate Automated Settlement Audit • All balances strictly reconciled to 0.00 • Generated on ${new Date().toLocaleString()}`,
-    margin,
-    pageHeight - 8
-  );
+  // Stamp Running Footers & Page Numbers on all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(148, 163, 184); // Slate-400
 
-  // Trigger download
+    // Left Footer: Audit statement
+    doc.text(
+      `TripMate Automated Settlement Audit • All balances strictly reconciled to 0.00 • Generated on ${formatDate(data.generatedAt)}`,
+      margin,
+      pageHeight - 8
+    );
+
+    // Right Footer: Page X of Y
+    doc.text(
+      `Page ${i} of ${totalPages}`,
+      pageWidth - margin,
+      pageHeight - 8,
+      { align: 'right' }
+    );
+  }
+
+  return doc;
+};
+
+export const generateTripReportPDF = (data: TripReportData) => {
+  const doc = createTripReportPDFDoc(data);
   const cleanName = (data.trip.name || 'Trip').replace(/[^a-zA-Z0-9_-]/g, '_');
   doc.save(`${cleanName}_Trip_Report.pdf`);
 };
