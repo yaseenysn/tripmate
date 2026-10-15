@@ -30,6 +30,11 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config();
 
+if (process.env.USE_MEMORY_DB === 'true') {
+  delete process.env.MONGODB_URI;
+  console.log('[Server Isolation] USE_MEMORY_DB active: MONGODB_URI deleted from process environment.');
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 

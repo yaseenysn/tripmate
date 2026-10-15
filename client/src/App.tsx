@@ -40,6 +40,7 @@ import {
   apiGetDocuments, apiGetActivity, apiGetNotifications,
   apiSendChatMessage, apiMarkActivitiesRead,
   setAuthToken, removeAuthToken, getAuthToken,
+  getPendingInviteToken, setPendingInviteToken, removePendingInviteToken,
   apiJoinWithToken, apiDeleteExpense, apiDeleteTrip,
   apiVotePoll, apiUpdateTask, apiUploadFile, apiCreateDocument
 } from './services/api';
@@ -145,17 +146,22 @@ export const App: React.FC = () => {
     initializeAuth();
   }, []);
 
-  // Handle URL Join Token (e.g. /join/:token)
+  // Handle URL Join Token (e.g. /join/:token) and persisted pending tokens
   useEffect(() => {
     const path = window.location.pathname;
+    let tokenFromUrl: string | null = null;
     if (path.includes('/join/')) {
       const rawToken = path.split('/join/')[1];
       if (rawToken) {
-        const cleanToken = rawToken.split('?')[0].split('#')[0].trim();
-        if (cleanToken) {
-          setPendingJoinToken(cleanToken);
-        }
+        tokenFromUrl = rawToken.split('?')[0].split('#')[0].trim();
       }
+    }
+    const effectiveToken = tokenFromUrl || getPendingInviteToken();
+    if (tokenFromUrl) {
+      setPendingInviteToken(tokenFromUrl);
+    }
+    if (effectiveToken) {
+      setPendingJoinToken(effectiveToken);
     }
   }, []);
 
@@ -1498,12 +1504,8 @@ export const App: React.FC = () => {
   if (!user) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col justify-center relative">
-        {pendingJoinToken && (
-          <div className="bg-emerald-600 text-white text-xs font-bold px-4 py-3 text-center shadow-lg sticky top-0 z-50">
-            🎉 You have been invited to join a TripMate group! Please sign in or create an account to view and accept your invitation.
-          </div>
-        )}
         <AuthView
+          inviteToken={pendingJoinToken}
           onAuthSuccess={(authUser) => {
             setUser(authUser);
             loadTrips();
@@ -1951,14 +1953,19 @@ export const App: React.FC = () => {
           currentUser={user}
           onJoined={(joinedTripId) => {
             setPendingJoinToken(null);
-            window.history.replaceState({}, '', '/');
+            removePendingInviteToken();
+            window.history.replaceState({}, '', `/trips/${joinedTripId}`);
             loadTrips();
             setActiveTripId(joinedTripId);
             setActiveSection('feed');
           }}
           onCancel={() => {
             setPendingJoinToken(null);
+            removePendingInviteToken();
             window.history.replaceState({}, '', '/');
+          }}
+          onSwitchAccount={() => {
+            handleLogout();
           }}
         />
       )}

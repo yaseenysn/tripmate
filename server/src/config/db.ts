@@ -13,7 +13,23 @@ if (process.platform === 'win32') {
 
 let mongoMemoryServer: MongoMemoryServer | null = null;
 
-export const connectDB = async (): Promise<string> => {
+export const connectDB = async (explicitUri?: string): Promise<string> => {
+  if (process.env.USE_MEMORY_DB === 'true' || explicitUri) {
+    try {
+      console.log('[Database] USE_MEMORY_DB is enabled. Connecting to isolated in-memory database...');
+      if (!explicitUri) {
+        mongoMemoryServer = await MongoMemoryServer.create();
+      }
+      const memoryUri = explicitUri || mongoMemoryServer!.getUri();
+      await mongoose.connect(memoryUri);
+      console.log(`[Database] Successfully connected to Isolated In-Memory MongoDB at ${memoryUri}`);
+      return memoryUri;
+    } catch (error) {
+      console.error('[Database] Failed to initialize MongoMemoryServer:', error);
+      throw error;
+    }
+  }
+
   const uri = process.env.MONGODB_URI;
 
   if (uri && uri.trim()) {

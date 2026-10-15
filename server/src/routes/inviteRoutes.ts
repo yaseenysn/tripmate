@@ -24,12 +24,10 @@ const generate6DigitCode = () => {
 // Helper to obtain the clean Frontend Base URL (Vercel domain)
 export const getFrontendBaseUrl = (req?: Request): string => {
   const rawEnv = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.trim() : '';
-  console.log(`[Invite Debug] Raw process.env.FRONTEND_URL: "${rawEnv}"`);
 
   if (rawEnv && rawEnv !== '*') {
     const firstUrl = rawEnv.split(',')[0].trim().replace(/^["']|["']$/g, '').replace(/\/$/, '');
     if (firstUrl && !firstUrl.includes('onrender.com') && !firstUrl.includes(':5000')) {
-      console.log(`[Invite Debug] Using FRONTEND_URL env var: "${firstUrl}"`);
       return firstUrl;
     }
   }
@@ -41,15 +39,18 @@ export const getFrontendBaseUrl = (req?: Request): string => {
         const u = new URL(originHeader);
         const cleanOrigin = u.origin.replace(/\/$/, '');
         if (!cleanOrigin.includes('onrender.com') && !cleanOrigin.includes(':5000')) {
-          console.log(`[Invite Debug] Using Request Origin/Referer header: "${cleanOrigin}"`);
           return cleanOrigin;
         }
       } catch (e) {}
     }
   }
 
-  console.log(`[Invite Debug] Defaulting to local dev fallback: "http://localhost:3001"`);
-  return 'http://localhost:3001';
+  // Fallback: in production default to official Vercel domain; in dev use local frontend
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://tripmate-ten-mu.vercel.app';
+  }
+
+  return 'http://localhost:3000';
 };
 
 // Send Email Invitation to a user
@@ -302,10 +303,25 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
       return res.status(403).json({ error: 'This trip is CLOSED and read-only. Joining is not permitted.' });
     }
 
+    // Email restriction check: If invite was sent to a specific email, verify authenticated user email
+    if (invite.invitedEmail) {
+      const userEmail = (req.user?.email || '').trim().toLowerCase();
+      const targetEmail = invite.invitedEmail.trim().toLowerCase();
+      if (userEmail !== targetEmail) {
+        return res.status(403).json({
+          error: `This invitation is restricted to ${invite.invitedEmail}. You are currently authenticated as ${req.user?.email}.`
+        });
+      }
+    }
+
     // Check if user is already a member
     const existingMember = await TripMember.findOne({ tripId: trip._id, userId });
     if (existingMember) {
-      return res.json({ message: 'You are already a member of this trip', tripId: trip._id });
+      return res.status(200).json({
+        message: 'You are already a member of this trip',
+        tripId: trip._id,
+        alreadyMember: true
+      });
     }
 
     // Create TripMember record
@@ -315,7 +331,10 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
       role: 'MEMBER'
     });
 
-    invite.usedCount += 1;
+    invite.usedCount = (invite.usedCount || 0) + 1;
+    if (invite.maxUses && invite.usedCount >= invite.maxUses) {
+      invite.isActive = false;
+    }
     await invite.save();
 
     // Socket real-time broadcast to trip room
@@ -369,9 +388,24 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
       return res.status(403).json({ error: 'This trip is CLOSED and read-only. Joining is not permitted.' });
     }
 
+    // Email restriction check: If invite was sent to a specific email, verify authenticated user email
+    if (invite.invitedEmail) {
+      const userEmail = (req.user?.email || '').trim().toLowerCase();
+      const targetEmail = invite.invitedEmail.trim().toLowerCase();
+      if (userEmail !== targetEmail) {
+        return res.status(403).json({
+          error: `This invitation code is restricted to ${invite.invitedEmail}. You are currently authenticated as ${req.user?.email}.`
+        });
+      }
+    }
+
     const existingMember = await TripMember.findOne({ tripId: trip._id, userId });
     if (existingMember) {
-      return res.json({ message: 'You are already a member of this trip', tripId: trip._id });
+      return res.status(200).json({
+        message: 'You are already a member of this trip',
+        tripId: trip._id,
+        alreadyMember: true
+      });
     }
 
     await TripMember.create({
@@ -380,7 +414,10 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
       role: 'MEMBER'
     });
 
-    invite.usedCount += 1;
+    invite.usedCount = (invite.usedCount || 0) + 1;
+    if (invite.maxUses && invite.usedCount >= invite.maxUses) {
+      invite.isActive = false;
+    }
     await invite.save();
 
     // Socket real-time broadcast

@@ -27,6 +27,21 @@ export const getAuthToken = () => localStorage.getItem('tripmate_token');
 export const setAuthToken = (token: string) => localStorage.setItem('tripmate_token', token);
 export const removeAuthToken = () => localStorage.removeItem('tripmate_token');
 
+export const getPendingInviteToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return sessionStorage.getItem('tripmate_pending_invite') || localStorage.getItem('tripmate_pending_invite');
+};
+export const setPendingInviteToken = (token: string) => {
+  if (typeof window === 'undefined') return;
+  sessionStorage.setItem('tripmate_pending_invite', token);
+  localStorage.setItem('tripmate_pending_invite', token);
+};
+export const removePendingInviteToken = () => {
+  if (typeof window === 'undefined') return;
+  sessionStorage.removeItem('tripmate_pending_invite');
+  localStorage.removeItem('tripmate_pending_invite');
+};
+
 const request = async (endpoint: string, options: RequestInit = {}) => {
   const token = getAuthToken();
   const headers: Record<string, string> = {

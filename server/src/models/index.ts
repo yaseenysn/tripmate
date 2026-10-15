@@ -214,7 +214,7 @@ const SettlementSchema = new Schema<ISettlement>({
   amount: { type: Number, required: true },
   status: { type: String, enum: ['PENDING', 'PAID'], default: 'PENDING' },
   paidAt: { type: Date },
-  idempotencyKey: { type: String, sparse: true },
+  idempotencyKey: { type: String, sparse: true, unique: true },
   notes: { type: String, default: '' },
   reference: { type: String, default: '' }
 }, { timestamps: true });

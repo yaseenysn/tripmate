@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
-import { Compass, Mail, Lock, User, ArrowRight, ShieldCheck, AlertCircle } from 'lucide-react';
-import { apiLogin, apiRegister, setAuthToken } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { Compass, Mail, Lock, User, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { apiLogin, apiRegister, apiPreviewInvite, setAuthToken } from '../services/api';
 
 interface AuthViewProps {
   onAuthSuccess: (user: any, token: string) => void;
+  inviteToken?: string | null;
 }
 
-export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
+export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess, inviteToken }) => {
   const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
 
   // Login State
@@ -21,6 +22,30 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+
+  // Invite preview state
+  const [invitePreview, setInvitePreview] = useState<any>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (inviteToken) {
+      setInviteError(null);
+      apiPreviewInvite(inviteToken)
+        .then((data) => {
+          setInvitePreview(data);
+          if (data?.invite?.invitedEmail) {
+            setLoginEmail(data.invite.invitedEmail);
+            setRegEmail(data.invite.invitedEmail);
+          }
+          // Default to registration so invitee can create their account seamlessly
+          setMode('REGISTER');
+        })
+        .catch((err) => {
+          setInviteError(err.message || 'Invalid or expired invitation link');
+        });
+    }
+  }, [inviteToken]);
 
   const formatAuthError = (err: any, defaultMsg: string) => {
     if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError') || err?.message?.includes('fetch failed')) {
@@ -39,7 +64,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
     setLoading(true);
     try {
-      const res = await apiLogin(loginEmail, loginPassword);
+      const res = await apiLogin(loginEmail.trim(), loginPassword);
       if (res.token && res.user) {
         setAuthToken(res.token);
         onAuthSuccess(res.user, res.token);
@@ -73,7 +98,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
     setLoading(true);
     try {
-      const res = await apiRegister(regName, regEmail, regPassword);
+      const res = await apiRegister(regName.trim(), regEmail.trim(), regPassword);
       if (res.token && res.user) {
         setAuthToken(res.token);
         onAuthSuccess(res.user, res.token);
@@ -82,25 +107,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
       }
     } catch (err: any) {
       setError(formatAuthError(err, 'Registration failed.'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Helper for quick demo user login
-  const handleQuickDemoLogin = async (email: string) => {
-    setLoginEmail(email);
-    setLoginPassword('password123');
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await apiLogin(email, 'password123');
-      if (res.token && res.user) {
-        setAuthToken(res.token);
-        onAuthSuccess(res.user, res.token);
-      }
-    } catch (err: any) {
-      setError(formatAuthError(err, 'Demo login failed'));
     } finally {
       setLoading(false);
     }
@@ -116,17 +122,76 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">TripMate</h1>
           <p className="text-xs sm:text-sm text-slate-400 font-medium">
-            {mode === 'LOGIN' ? 'Log in to your trip workspace' : 'Create an account to start planning trips'}
+            {invitePreview
+              ? `You've been invited to join ${invitePreview.trip?.name || 'a trip'}!`
+              : mode === 'LOGIN'
+              ? 'Log in to your trip workspace'
+              : 'Create an account to start planning trips'}
           </p>
         </div>
 
         {/* Auth Card Container */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5">
-          {/* Error Message */}
+          {/* Invitation Preview Banner */}
+          {invitePreview && (
+            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-4 space-y-2 text-left">
+              <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Trip Group Invitation</span>
+              </div>
+              <div>
+                <h3 className="text-white font-extrabold text-sm sm:text-base">
+                  {invitePreview.trip?.name}
+                </h3>
+                <p className="text-xs text-slate-300">
+                  Invited by <strong className="text-emerald-300">{invitePreview.inviter?.name || 'A trip member'}</strong>
+                </p>
+              </div>
+              {invitePreview.invite?.invitedEmail && (
+                <div className="text-[11px] text-emerald-300/90 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-xl">
+                  Invitation reserved for: <strong>{invitePreview.invite.invitedEmail}</strong>
+                </div>
+              )}
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                {mode === 'REGISTER'
+                  ? 'Complete your registration below to accept this invitation and enter the trip workspace.'
+                  : 'Log in with your account to accept this invitation and enter the trip workspace.'}
+              </p>
+            </div>
+          )}
+
+          {/* Invitation Error / Invalid link warning */}
+          {inviteError && (
+            <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 px-4 py-3 rounded-2xl text-xs flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span>Notice: {inviteError}. You can still log in or sign up below.</span>
+            </div>
+          )}
+
+          {/* Form Error Message */}
           {error && (
             <div className="bg-rose-500/10 border border-rose-500/20 text-rose-300 px-4 py-3 rounded-2xl text-xs flex items-center gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {/* Forgot Password Notice Modal */}
+          {showForgotPassword && (
+            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs animate-in fade-in duration-150">
+              <div className="flex items-center justify-between text-slate-200 font-bold">
+                <span>Password Assistance</span>
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(false)}
+                  className="text-slate-400 hover:text-slate-200 text-sm font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-slate-400 leading-relaxed text-[11.5px]">
+                To reset your password, please contact your trip workspace administrator or send an email to <strong className="text-indigo-400">support@tripmate.app</strong>.
+              </p>
             </div>
           )}
 
@@ -140,7 +205,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 <div className="relative flex items-center">
                   <input
                     type="email"
-                    placeholder="yaseen@example.com"
+                    placeholder="name@example.com"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     required
@@ -151,9 +216,18 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold transition-colors"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
                 <div className="relative flex items-center">
                   <input
                     type="password"
@@ -195,36 +269,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   Don't have an account? <strong className="text-indigo-400 font-bold">Sign up</strong>
                 </button>
               </div>
-
-              {/* Quick Demo Accounts */}
-              <div className="pt-4 border-t border-slate-800/80 space-y-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 text-center block">
-                  Quick Demo Accounts
-                </span>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin('yaseen@example.com')}
-                    className="py-1.5 px-2 bg-slate-950 hover:bg-slate-800 text-[11px] font-semibold text-slate-300 rounded-xl border border-slate-800 text-center truncate"
-                  >
-                    Yaseen
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin('bilal@example.com')}
-                    className="py-1.5 px-2 bg-slate-950 hover:bg-slate-800 text-[11px] font-semibold text-slate-300 rounded-xl border border-slate-800 text-center truncate"
-                  >
-                    Bilal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoLogin('amal@example.com')}
-                    className="py-1.5 px-2 bg-slate-950 hover:bg-slate-800 text-[11px] font-semibold text-slate-300 rounded-xl border border-slate-800 text-center truncate"
-                  >
-                    Amal
-                  </button>
-                </div>
-              </div>
             </form>
           ) : (
             /* REGISTER FORM */
@@ -236,7 +280,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 <div className="relative flex items-center">
                   <input
                     type="text"
-                    placeholder="e.g. Yaseen"
+                    placeholder="e.g. John Doe"
                     value={regName}
                     onChange={(e) => setRegName(e.target.value)}
                     required
@@ -308,7 +352,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <>
-                    <span>Create Account</span>
+                    <span>Create Account & Join</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
