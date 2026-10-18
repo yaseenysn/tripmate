@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { FileText, Plus, Download, Trash2, Upload, Loader2 } from 'lucide-react';
 import { apiCreateDocument, apiDeleteDocument, apiUploadFile } from '../services/api';
+import { sanitizeUrl, isSafeUrl } from '../utils/security';
 
 interface DocumentsViewProps {
   tripId: string;
@@ -61,6 +62,11 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     e.preventDefault();
     if (!name || (!fileUrl && !selectedFile)) {
       setError('Please select a file or provide a valid URL');
+      return;
+    }
+
+    if (fileUrl && !isSafeUrl(fileUrl)) {
+      setError('Invalid URL protocol. Only HTTP and HTTPS links are permitted.');
       return;
     }
 
@@ -150,7 +156,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
 
               <div className="flex items-center gap-2">
                 <a
-                  href={doc.fileUrl}
+                  href={sanitizeUrl(doc.fileUrl)}
                   target="_blank"
                   rel="noreferrer"
                   className="p-2 text-slate-400 hover:text-cyan-400 rounded-lg hover:bg-cyan-500/10 transition-all"

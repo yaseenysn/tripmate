@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { Settlement, Trip, User, Expense, Activity } from '../models';
+import { Settlement, Trip, User, Expense, Activity, TripMember } from '../models';
 import { authenticateToken } from '../middleware/auth';
 import {
   requireTripMembership,
@@ -13,6 +13,7 @@ import {
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { isValidObjectId, isSafeString, isValidNumber, handleRouteError } from '../utils/validation';
 
 const router = Router();
 
@@ -95,7 +96,7 @@ router.get(
         recordedSettlements
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error fetching settlements' });
+      handleRouteError(error, res, 'Error fetching settlements');
     }
   }
 );
@@ -120,28 +121,63 @@ router.post(
         settlementId
       } = req.body;
 
-      if (!fromUser || !toUser || !amount || Number(amount) <= 0) {
+      if (!fromUser || !toUser || amount === undefined) {
         return res.status(400).json({
           error: 'fromUser, toUser, and a positive amount are required'
         });
       }
 
-      if (fromUser.toString() === toUser.toString()) {
+      if (!isValidNumber(amount, 0.01)) {
+        return res.status(400).json({
+          error: 'Settlement amount must be a positive number'
+        });
+      }
+
+      const fromUserStr = (fromUser?._id || fromUser)?.toString().trim();
+      const toUserStr = (toUser?._id || toUser)?.toString().trim();
+
+      if (!isValidObjectId(fromUserStr) || !isValidObjectId(toUserStr)) {
+        return res.status(400).json({
+          error: 'Invalid user ID format for settlement payer or receiver'
+        });
+      }
+
+      if (fromUserStr === toUserStr) {
         return res.status(400).json({
           error: 'Payer and receiver cannot be the same member'
+        });
+      }
+
+      // Ensure both fromUser and toUser are active members of this trip
+      const [fromMember, toMember] = await Promise.all([
+        TripMember.findOne({ tripId, userId: fromUserStr }),
+        TripMember.findOne({ tripId, userId: toUserStr })
+      ]);
+
+      if (!fromMember || !toMember) {
+        return res.status(400).json({
+          error: 'Both payer and receiver must be active members of this trip'
         });
       }
 
       // Authorization check: User must be payer, receiver, or trip ADMIN
       const isAdmin = req.tripMember?.role === 'ADMIN';
       const isParticipant =
-        userId.toString() === fromUser.toString() ||
-        userId.toString() === toUser.toString();
+        userId.toString() === fromUserStr ||
+        userId.toString() === toUserStr;
 
       if (!isAdmin && !isParticipant) {
         return res.status(403).json({
           error: 'Only the payer, receiver, or a trip admin can record this settlement payment.'
         });
+      }
+
+      if (notes && !isSafeString(notes, 0, 500)) {
+        return res.status(400).json({ error: 'Notes must not exceed 500 characters' });
+      }
+
+      if (reference && !isSafeString(reference, 0, 200)) {
+        return res.status(400).json({ error: 'Reference must not exceed 200 characters' });
       }
 
       const numAmount = Math.round(Number(amount) * 100) / 100;
@@ -262,7 +298,7 @@ router.post(
         calculation: freshCalculation
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error recording settlement' });
+      handleRouteError(error, res, 'Error recording settlement');
     }
   }
 );
@@ -277,12 +313,29 @@ router.post(
     try {
       const { id: tripId, settlementId } = req.params;
 
+      if (!isValidObjectId(settlementId)) {
+        return res.status(400).json({ error: 'Invalid settlement ID format' });
+      }
+
       const settlement = await Settlement.findById(settlementId)
         .populate('fromUser', 'name avatar email')
         .populate('toUser', 'name avatar email');
 
       if (!settlement || settlement.tripId.toString() !== tripId) {
         return res.status(404).json({ error: 'Settlement not found' });
+      }
+
+      // Authorization check: User must be payer, receiver, or trip ADMIN
+      const currentUserId = req.user!.userId;
+      const isAdmin = req.tripMember?.role === 'ADMIN';
+      const payerId = (settlement.fromUser as any)?._id?.toString() || settlement.fromUser?.toString();
+      const payeeId = (settlement.toUser as any)?._id?.toString() || settlement.toUser?.toString();
+      const isParticipant = currentUserId === payerId || currentUserId === payeeId;
+
+      if (!isAdmin && !isParticipant) {
+        return res.status(403).json({
+          error: 'Access denied: Only the payer, receiver, or a trip admin can mark this settlement as paid.'
+        });
       }
 
       // If already paid, return safely without duplicate activity
@@ -331,7 +384,7 @@ router.post(
 
       res.json({ settlement, calculation: freshCalculation });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error updating settlement status' });
+      handleRouteError(error, res, 'Error updating settlement status');
     }
   }
 );
@@ -346,7 +399,7 @@ router.get(
       const report = await generateAuthoritativeTripReport(req.params.id);
       res.json({ report });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error generating report' });
+      handleRouteError(error, res, 'Error generating report');
     }
   }
 );

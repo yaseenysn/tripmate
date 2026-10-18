@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from './auth';
 import { TripMember } from '../models';
+import { isValidObjectId } from '../utils/validation';
 
 export interface TripAuthRequest extends AuthRequest {
   tripMember?: {
@@ -18,6 +19,10 @@ export const requireTripMembership = async (req: TripAuthRequest, res: Response,
 
   if (!tripId) {
     return res.status(400).json({ error: 'Trip ID parameter missing' });
+  }
+
+  if (!isValidObjectId(tripId)) {
+    return res.status(400).json({ error: 'Invalid trip ID format. Expected a 24-character hexadecimal ObjectId.' });
   }
 
   try {
@@ -43,6 +48,9 @@ export const requireTripAdmin = async (req: TripAuthRequest, res: Response, next
 export const requireNotClosedTrip = async (req: TripAuthRequest, res: Response, next: NextFunction) => {
   const tripId = req.params.tripId || req.params.id;
   if (!tripId) return next();
+  if (!isValidObjectId(tripId)) {
+    return res.status(400).json({ error: 'Invalid trip ID format. Expected a 24-character hexadecimal ObjectId.' });
+  }
 
   try {
     const { Trip } = await import('../models');
@@ -52,13 +60,8 @@ export const requireNotClosedTrip = async (req: TripAuthRequest, res: Response, 
     }
 
     if (trip.status === 'CLOSED') {
-      // Allow authorized correction workflow if admin explicitly provides correctionReason
-      const isAdmin = req.tripMember?.role === 'ADMIN';
-      if (isAdmin && req.body?.isCorrection && req.body?.correctionReason) {
-        return next();
-      }
       return res.status(403).json({
-        error: 'This trip is CLOSED and read-only. Ordinary modifications are not permitted.'
+        error: 'This trip is CLOSED and read-only. Modifications to closed trips are not permitted.'
       });
     }
     next();

@@ -5,6 +5,7 @@ import {
   RefreshCw, DollarSign, Calculator, ArrowRight, CreditCard, HelpCircle
 } from 'lucide-react';
 import { apiGetTripReport, apiCloseTrip } from '../services/api';
+// PDF report generator service
 import { generateTripReportPDF } from '../services/pdfReportGenerator';
 import { getTripReportCache, setTripReportCache, invalidateTripReportCache } from '../services/tripCache';
 import { getSocket } from '../services/socket';

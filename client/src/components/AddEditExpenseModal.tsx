@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, DollarSign, Tag, User, Users, Percent, Check, Upload, Loader2, Image as ImageIcon, Lock } from 'lucide-react';
 import { apiCreateExpense, apiUpdateExpense, apiUploadFile } from '../services/api';
+import { sanitizeUrl } from '../utils/security';
 
 interface AddEditExpenseModalProps {
   isOpen: boolean;
@@ -476,7 +477,7 @@ export const AddEditExpenseModal: React.FC<AddEditExpenseModalProps> = ({
               </label>
               {receiptUrl && (
                 <a
-                  href={receiptUrl}
+                  href={sanitizeUrl(receiptUrl)}
                   target="_blank"
                   rel="noreferrer"
                   className="p-2 bg-emerald-600/20 text-emerald-400 rounded-xl border border-emerald-500/30 font-semibold hover:bg-emerald-600/30"

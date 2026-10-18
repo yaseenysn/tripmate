@@ -22,6 +22,7 @@ export const RecordSettlementModal: React.FC<RecordSettlementModalProps> = ({
   const [amount, setAmount] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [reference, setReference] = useState<string>('');
+  const [idempotencyKey, setIdempotencyKey] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,8 +32,11 @@ export const RecordSettlementModal: React.FC<RecordSettlementModalProps> = ({
       setNotes(`Settlement payment between ${settlementData.fromUser?.name} and ${settlementData.toUser?.name}`);
       setReference('');
       setError(null);
+      const fromId = settlementData.fromUser?._id;
+      const toId = settlementData.toUser?._id;
+      setIdempotencyKey(`rec_${tripId}_${fromId}_${toId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`);
     }
-  }, [settlementData]);
+  }, [settlementData, tripId]);
 
   if (!isOpen || !settlementData) return null;
 
@@ -49,7 +53,7 @@ export const RecordSettlementModal: React.FC<RecordSettlementModalProps> = ({
     try {
       const fromUserId = settlementData.fromUser?._id;
       const toUserId = settlementData.toUser?._id;
-      const idempotencyKey = `rec_${tripId}_${fromUserId}_${toUserId}_${Date.now()}`;
+      const activeIdempotencyKey = idempotencyKey || `rec_${tripId}_${fromUserId}_${toUserId}_${Date.now()}`;
 
       await apiRecordSettlement(tripId, {
         fromUser: fromUserId,
@@ -57,7 +61,7 @@ export const RecordSettlementModal: React.FC<RecordSettlementModalProps> = ({
         amount: Number(amount),
         notes: notes.trim() || undefined,
         reference: reference.trim() || undefined,
-        idempotencyKey,
+        idempotencyKey: activeIdempotencyKey,
         settlementId: settlementData.settlementId
       });
 

@@ -38,48 +38,19 @@ if (process.env.USE_MEMORY_DB === 'true') {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Dynamic CORS configuration supporting FRONTEND_URL env var and local development
-const getCorsOrigins = () => {
-  const frontendUrl = process.env.FRONTEND_URL;
-  const origins = frontendUrl ? frontendUrl.split(',').map(url => url.trim().replace(/\/$/, '')) : [];
-  return Array.from(new Set([
-    ...origins,
-    'https://tripmate-ten-mu.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:5173',
-    'http://localhost:5000',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:5000'
-  ]));
-};
+import { getCorsOrigins, allowedOrigins, corsOriginHandler } from './config/cors';
+export { getCorsOrigins, allowedOrigins, corsOriginHandler };
 
-const allowedOrigins = getCorsOrigins();
 
-const corsOriginHandler = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-  // Allow requests with no origin (like mobile apps, curl, Postman)
-  if (!origin) return callback(null, true);
-  if (
-    origin.startsWith('http://localhost:') ||
-    origin.startsWith('http://127.0.0.1:') ||
-    origin === 'https://tripmate-ten-mu.vercel.app' ||
-    origin.endsWith('.vercel.app') ||
-    allowedOrigins.includes(origin) ||
-    allowedOrigins.includes('*')
-  ) {
-    return callback(null, true);
-  }
-  callback(null, false);
-};
+import { noSqlSanitizerMiddleware } from './utils/validation';
 
 app.use(cors({
   origin: corsOriginHandler,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(noSqlSanitizerMiddleware);
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
@@ -121,10 +92,18 @@ app.use('/api/*', (req, res) => {
 
 // Global JSON Error Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.name === 'CastError') {
+    return res.status(400).json({ error: `Invalid ${err.path || 'identifier'} format` });
+  }
+  if (err.name === 'ValidationError') {
+    const errorDetails = err.errors ? Object.values(err.errors).map((e: any) => e.message).join('; ') : err.message;
+    return res.status(400).json({ error: `Validation error: ${errorDetails}` });
+  }
   console.error('[Express API Error]:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error'
-  });
+  const status = typeof err.status === 'number' ? err.status : 500;
+  const isProd = process.env.NODE_ENV === 'production';
+  const message = status < 500 ? (err.message || 'Bad Request') : (isProd ? 'Internal Server Error' : (err.message || 'Internal Server Error'));
+  res.status(status).json({ error: message });
 });
 
 // Start Server & Connect Database

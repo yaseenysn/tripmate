@@ -4,6 +4,7 @@ import { authenticateToken } from '../middleware/auth';
 import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { isValidObjectId, isSafeString, handleRouteError } from '../utils/validation';
 
 const router = Router();
 
@@ -53,7 +54,7 @@ router.get('/:id/polls', authenticateToken, requireTripMembership, async (req: T
 
     res.json({ polls: enrichedPolls });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching polls' });
+    handleRouteError(error, res, 'Error fetching polls');
   }
 });
 
@@ -64,14 +65,27 @@ router.post('/:id/polls', authenticateToken, requireTripMembership, requireNotCl
     const userId = req.user!.userId;
     const { question, options } = req.body;
 
-    if (!question || !options || !Array.isArray(options) || options.length < 2) {
-      return res.status(400).json({ error: 'Question and at least 2 options are required' });
+    if (!question || !isSafeString(question, 1, 300)) {
+      return res.status(400).json({ error: 'Poll question is required and must be between 1 and 300 characters' });
+    }
+
+    if (!options || !Array.isArray(options) || options.length < 2 || options.length > 20) {
+      return res.status(400).json({ error: 'Poll must contain between 2 and 20 options' });
+    }
+
+    const cleanedOptions: { text: string }[] = [];
+    for (const opt of options) {
+      const text = typeof opt === 'string' ? opt.trim() : (opt && typeof opt.text === 'string' ? opt.text.trim() : '');
+      if (!isSafeString(text, 1, 150)) {
+        return res.status(400).json({ error: 'Each poll option must be between 1 and 150 characters' });
+      }
+      cleanedOptions.push({ text });
     }
 
     const poll = await Poll.create({
       tripId,
-      question,
-      options: options.map(opt => ({ text: typeof opt === 'string' ? opt : opt.text })),
+      question: question.trim(),
+      options: cleanedOptions,
       createdBy: userId,
       isClosed: false
     });
@@ -82,14 +96,14 @@ router.post('/:id/polls', authenticateToken, requireTripMembership, requireNotCl
       tripId,
       userId,
       'POLL_CREATED',
-      `created poll "${question}"`,
+      `created poll "${question.trim()}"`,
       { pollId: poll._id, poll: populated }
     );
     emitToTrip(tripId, 'poll.created', populated);
 
     res.status(201).json({ poll: populated });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error creating poll' });
+    handleRouteError(error, res, 'Error creating poll');
   }
 });
 
@@ -100,7 +114,11 @@ router.post('/:id/polls/:pollId/vote', authenticateToken, requireTripMembership,
     const userId = req.user!.userId;
     const { optionId } = req.body;
 
-    if (!optionId) {
+    if (!isValidObjectId(pollId)) {
+      return res.status(400).json({ error: 'Invalid poll ID format' });
+    }
+
+    if (!optionId || typeof optionId !== 'string') {
       return res.status(400).json({ error: 'Option ID is required' });
     }
 
@@ -182,7 +200,7 @@ router.post('/:id/polls/:pollId/vote', authenticateToken, requireTripMembership,
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error voting on poll' });
+    handleRouteError(error, res, 'Error voting on poll');
   }
 });
 

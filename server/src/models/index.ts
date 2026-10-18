@@ -12,8 +12,8 @@ export interface IUser extends Document {
 }
 
 const UserSchema = new Schema<IUser>({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  name: { type: String, required: true, trim: true, maxlength: 100 },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true, maxlength: 254 },
   passwordHash: { type: String, required: true },
   avatar: { type: String, default: '' },
   avatarPublicId: { type: String },
@@ -44,15 +44,15 @@ export interface ITrip extends Document {
 }
 
 const TripSchema = new Schema<ITrip>({
-  name: { type: String, required: true },
-  destination: { type: String, required: true },
+  name: { type: String, required: true, trim: true, maxlength: 150 },
+  destination: { type: String, required: true, trim: true, maxlength: 150 },
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
   coverImage: { type: String, default: '' },
   coverImagePublicId: { type: String },
-  currency: { type: String, default: '₹' },
-  estimatedBudget: { type: Number, default: 0 },
-  description: { type: String, default: '' },
+  currency: { type: String, default: '₹', trim: true, maxlength: 10 },
+  estimatedBudget: { type: Number, default: 0, min: 0 },
+  description: { type: String, default: '', trim: true, maxlength: 2000 },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   status: { type: String, enum: ['UPCOMING', 'ACTIVE', 'COMPLETED', 'SETTLED', 'CLOSED'], default: 'ACTIVE' },
   settlementStatus: { type: String, enum: ['PENDING', 'SETTLED'], default: 'PENDING' },
@@ -103,10 +103,10 @@ const TripInviteSchema = new Schema<ITripInvite>({
   code: { type: String, required: true, unique: true },
   token: { type: String, required: true, unique: true },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  invitedEmail: { type: String, lowercase: true, trim: true },
+  invitedEmail: { type: String, lowercase: true, trim: true, maxlength: 254 },
   expiresAt: { type: Date },
-  maxUses: { type: Number },
-  usedCount: { type: Number, default: 0 },
+  maxUses: { type: Number, min: 1 },
+  usedCount: { type: Number, default: 0, min: 0 },
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now }
 });
@@ -142,8 +142,8 @@ export interface IExpense extends Document {
 
 const ExpenseSchema = new Schema<IExpense>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
-  title: { type: String, required: true },
-  amount: { type: Number, required: true },
+  title: { type: String, required: true, trim: true, maxlength: 150 },
+  amount: { type: Number, required: true, min: 0.01 },
   category: { 
     type: String, 
     enum: ['Transportation', 'Accommodation', 'Food', 'Activities', 'Local Transport', 'Shopping', 'Emergency', 'Miscellaneous'],
@@ -154,12 +154,12 @@ const ExpenseSchema = new Schema<IExpense>({
   splitType: { type: String, enum: ['EQUAL', 'CUSTOM', 'PERCENTAGE'], default: 'EQUAL' },
   participants: [{
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    share: { type: Number, required: true },
-    percentage: { type: Number },
-    paidAmount: { type: Number, default: 0 },
+    share: { type: Number, required: true, min: 0 },
+    percentage: { type: Number, min: 0, max: 100 },
+    paidAmount: { type: Number, default: 0, min: 0 },
     status: { type: String, enum: ['PENDING', 'PARTIAL', 'PAID'], default: 'PENDING' }
   }],
-  notes: { type: String },
+  notes: { type: String, trim: true, maxlength: 2000 },
   receiptUrl: { type: String },
   receiptPublicId: { type: String },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -183,10 +183,10 @@ export interface IBudget extends Document {
 
 const BudgetSchema = new Schema<IBudget>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true, unique: true },
-  totalBudget: { type: Number, required: true, default: 0 },
+  totalBudget: { type: Number, required: true, default: 0, min: 0 },
   categoryBudgets: [{
-    category: { type: String, required: true },
-    plannedAmount: { type: Number, required: true, default: 0 }
+    category: { type: String, required: true, trim: true, maxlength: 100 },
+    plannedAmount: { type: Number, required: true, default: 0, min: 0 }
   }]
 });
 
@@ -211,12 +211,12 @@ const SettlementSchema = new Schema<ISettlement>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
   fromUser: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   toUser: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  amount: { type: Number, required: true },
+  amount: { type: Number, required: true, min: 0.01 },
   status: { type: String, enum: ['PENDING', 'PAID'], default: 'PENDING' },
   paidAt: { type: Date },
   idempotencyKey: { type: String, sparse: true, unique: true },
-  notes: { type: String, default: '' },
-  reference: { type: String, default: '' }
+  notes: { type: String, default: '', trim: true, maxlength: 500 },
+  reference: { type: String, default: '', trim: true, maxlength: 200 }
 }, { timestamps: true });
 
 SettlementSchema.index({ tripId: 1, status: 1 });
@@ -243,16 +243,16 @@ export interface IItineraryItem extends Document {
 
 const ItineraryItemSchema = new Schema<IItineraryItem>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
-  dayNumber: { type: Number, required: true, default: 1 },
+  dayNumber: { type: Number, required: true, default: 1, min: 1 },
   date: { type: Date, required: true },
   startTime: { type: String, default: '' },
   endTime: { type: String, default: '' },
-  title: { type: String, required: true },
-  location: { type: String, default: '' },
-  description: { type: String, default: '' },
-  estimatedCost: { type: Number, default: 0 },
+  title: { type: String, required: true, trim: true, maxlength: 150 },
+  location: { type: String, default: '', trim: true, maxlength: 150 },
+  description: { type: String, default: '', trim: true, maxlength: 2000 },
+  estimatedCost: { type: Number, default: 0, min: 0 },
   assignedMembers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-  notes: { type: String, default: '' },
+  notes: { type: String, default: '', trim: true, maxlength: 2000 },
   order: { type: Number, default: 0 }
 }, { timestamps: true });
 
@@ -284,13 +284,13 @@ const BookingSchema = new Schema<IBooking>({
     enum: ['FLIGHT', 'TRAIN', 'BUS', 'HOTEL', 'CAB', 'ACTIVITY', 'OTHER'],
     required: true 
   },
-  provider: { type: String, required: true },
-  bookingReference: { type: String, default: '' },
+  provider: { type: String, required: true, trim: true, maxlength: 150 },
+  bookingReference: { type: String, default: '', trim: true, maxlength: 100 },
   date: { type: Date, required: true },
   time: { type: String, default: '' },
-  location: { type: String, default: '' },
-  cost: { type: Number, default: 0 },
-  notes: { type: String, default: '' },
+  location: { type: String, default: '', trim: true, maxlength: 150 },
+  cost: { type: Number, default: 0, min: 0 },
+  notes: { type: String, default: '', trim: true, maxlength: 2000 },
   attachmentUrl: { type: String, default: '' },
   attachmentPublicId: { type: String },
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true }
@@ -314,7 +314,7 @@ export interface IDocument extends Document {
 
 const DocumentSchema = new Schema<IDocument>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
-  name: { type: String, required: true },
+  name: { type: String, required: true, trim: true, maxlength: 150 },
   type: { 
     type: String, 
     enum: ['TICKET', 'RECEIPT', 'CONFIRMATION', 'ID', 'PHOTO', 'OTHER'],
@@ -345,8 +345,8 @@ export interface ITask extends Document {
 
 const TaskSchema = new Schema<ITask>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
-  title: { type: String, required: true },
-  description: { type: String, default: '' },
+  title: { type: String, required: true, trim: true, maxlength: 200 },
+  description: { type: String, default: '', trim: true, maxlength: 2000 },
   assignedTo: { type: Schema.Types.ObjectId, ref: 'User' },
   dueDate: { type: Date },
   priority: { type: String, enum: ['HIGH', 'MEDIUM', 'LOW'], default: 'MEDIUM' },
@@ -375,9 +375,9 @@ export interface IPoll extends Document {
 
 const PollSchema = new Schema<IPoll>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
-  question: { type: String, required: true },
+  question: { type: String, required: true, trim: true, maxlength: 300 },
   options: [{
-    text: { type: String, required: true }
+    text: { type: String, required: true, trim: true, maxlength: 150 }
   }],
   createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   isClosed: { type: Boolean, default: false }
@@ -422,8 +422,8 @@ export interface IActivity extends Document {
 const ActivitySchema = new Schema<IActivity>({
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip', required: true },
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  type: { type: String, required: true },
-  description: { type: String, required: true },
+  type: { type: String, required: true, maxlength: 50 },
+  description: { type: String, required: true, trim: true, maxlength: 5000 },
   metadata: { type: Object },
   status: { type: String, enum: ['SENT', 'DELIVERED', 'READ'], default: 'SENT' },
   readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }]
@@ -448,9 +448,9 @@ export interface INotification extends Document {
 const NotificationSchema = new Schema<INotification>({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   tripId: { type: Schema.Types.ObjectId, ref: 'Trip' },
-  title: { type: String, required: true },
-  message: { type: String, required: true },
-  type: { type: String, default: 'INFO' },
+  title: { type: String, required: true, trim: true, maxlength: 200 },
+  message: { type: String, required: true, trim: true, maxlength: 1000 },
+  type: { type: String, default: 'INFO', maxlength: 50 },
   isRead: { type: Boolean, default: false },
   link: { type: String }
 }, { timestamps: true });
@@ -458,3 +458,25 @@ const NotificationSchema = new Schema<INotification>({
 NotificationSchema.index({ userId: 1, createdAt: -1 });
 
 export const Notification = mongoose.model<INotification>('Notification', NotificationSchema);
+
+// 15. UploadedAsset
+export interface IUploadedAsset extends Document {
+  publicId: string;
+  uploadedBy: mongoose.Types.ObjectId;
+  folder: string;
+  originalName: string;
+  resourceType: string;
+  createdAt: Date;
+}
+
+const UploadedAssetSchema = new Schema<IUploadedAsset>({
+  publicId: { type: String, required: true, unique: true },
+  uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  folder: { type: String, default: 'documents' },
+  originalName: { type: String, default: '' },
+  resourceType: { type: String, default: 'image' }
+}, { timestamps: true });
+
+UploadedAssetSchema.index({ uploadedBy: 1 });
+
+export const UploadedAsset = mongoose.model<IUploadedAsset>('UploadedAsset', UploadedAssetSchema);

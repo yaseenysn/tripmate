@@ -4,6 +4,7 @@ import {
   Clock, MapPin, Download, ExternalLink, ChevronRight,
   CheckCircle2, Circle, AlertCircle, User, Loader2
 } from 'lucide-react';
+import { sanitizeUrl } from '../utils/security';
 
 // ============================================================================
 // 1. PHOTO MESSAGE CARD
@@ -167,7 +168,7 @@ const DocumentMessageCardComponent: React.FC<DocumentMessageCardProps> = ({
       <div className="pt-1 flex items-center justify-between border-t border-slate-700/40 gap-2">
         {fileUrl ? (
           <a
-            href={fileUrl}
+            href={sanitizeUrl(fileUrl)}
             target="_blank"
             rel="noreferrer"
             download

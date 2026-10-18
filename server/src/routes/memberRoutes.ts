@@ -6,6 +6,8 @@ import { calculateTripBalancesAndSettlements } from '../services/settlementServi
 import { logActivity } from '../services/activityService';
 import { emitToTrip } from '../sockets/socketHandler';
 
+import { isValidObjectId, handleRouteError } from '../utils/validation';
+
 const router = Router();
 
 // GET /api/trips/:id/members - Get all trip members with net balances
@@ -47,7 +49,7 @@ router.get('/:id/members', authenticateToken, requireTripMembership, async (req:
 
     res.json({ members: enrichedMembers });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching trip members' });
+    handleRouteError(error, res, 'Error fetching trip members');
   }
 });
 
@@ -56,6 +58,10 @@ router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership
   try {
     const { id: tripId, memberId } = req.params;
 
+    if (!isValidObjectId(memberId)) {
+      return res.status(400).json({ error: 'Invalid member ID format' });
+    }
+
     const memberDoc = await TripMember.findById(memberId).populate('userId', 'name');
     if (!memberDoc) {
       return res.status(404).json({ error: 'Member record not found' });
@@ -63,6 +69,14 @@ router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership
 
     if (memberDoc.tripId.toString() !== tripId) {
       return res.status(400).json({ error: 'Member does not belong to this trip' });
+    }
+
+    // Protect sole administrator
+    if (memberDoc.role === 'ADMIN') {
+      const adminCount = await TripMember.countDocuments({ tripId, role: 'ADMIN' });
+      if (adminCount <= 1) {
+        return res.status(400).json({ error: 'Cannot remove the sole administrator of the trip. Transfer admin rights to another member first.' });
+      }
     }
 
     const removedUserName = (memberDoc.userId as any)?.name || 'Member';
@@ -86,7 +100,7 @@ router.delete('/:id/members/:memberId', authenticateToken, requireTripMembership
 
     res.json({ message: 'Member removed successfully' });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error removing member' });
+    handleRouteError(error, res, 'Error removing member');
   }
 });
 
@@ -96,6 +110,10 @@ router.patch('/:id/members/:memberId/role', authenticateToken, requireTripMember
     const { id: tripId, memberId } = req.params;
     const { role } = req.body;
 
+    if (!isValidObjectId(memberId)) {
+      return res.status(400).json({ error: 'Invalid member ID format' });
+    }
+
     if (!['ADMIN', 'MEMBER'].includes(role)) {
       return res.status(400).json({ error: 'Role must be ADMIN or MEMBER' });
     }
@@ -103,6 +121,18 @@ router.patch('/:id/members/:memberId/role', authenticateToken, requireTripMember
     const memberDoc = await TripMember.findById(memberId).populate('userId', 'name');
     if (!memberDoc) {
       return res.status(404).json({ error: 'Member record not found' });
+    }
+
+    if (memberDoc.tripId.toString() !== tripId) {
+      return res.status(400).json({ error: 'Member does not belong to this trip' });
+    }
+
+    // Protect sole administrator from demoting themselves to MEMBER
+    if (memberDoc.role === 'ADMIN' && role === 'MEMBER') {
+      const adminCount = await TripMember.countDocuments({ tripId, role: 'ADMIN' });
+      if (adminCount <= 1) {
+        return res.status(400).json({ error: 'Cannot demote the sole administrator of the trip. Promote another member to admin first.' });
+      }
     }
 
     memberDoc.role = role;
@@ -114,7 +144,7 @@ router.patch('/:id/members/:memberId/role', authenticateToken, requireTripMember
 
     res.json({ member: memberDoc });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error updating member role' });
+    handleRouteError(error, res, 'Error updating member role');
   }
 });
 

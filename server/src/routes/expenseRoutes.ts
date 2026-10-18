@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import mongoose from 'mongoose';
-import { Expense, TripMember, Budget, Trip, Activity, Settlement } from '../models';
+import { Expense, TripMember, Budget, Trip, Activity, Settlement, UploadedAsset } from '../models';
 import { authenticateToken } from '../middleware/auth';
 import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { calculateTripBalancesAndSettlements } from '../services/settlementService';
@@ -8,6 +8,26 @@ import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { emitToTrip } from '../sockets/socketHandler';
 import { deleteFromCloudinary } from '../config/cloudinary';
+import { isSafeString, isValidUrl, isValidNumber, isValidObjectId, handleRouteError } from '../utils/validation';
+import { verifyAssetOwnership, handleEntityAssetReplacement } from '../utils/assetSecurity';
+
+const ALLOWED_CATEGORIES = [
+  'Transportation', 'Accommodation', 'Food', 'Activities',
+  'Local Transport', 'Shopping', 'Emergency', 'Miscellaneous'
+];
+
+export const normalizeCategory = (category: unknown): string | null => {
+  if (!category || typeof category !== 'string') return null;
+  const catStr = category.trim().toLowerCase();
+  const matched = ALLOWED_CATEGORIES.find(c => {
+    const cLow = c.toLowerCase();
+    return cLow === catStr || 
+           (cLow === 'transportation' && (catStr === 'transport' || catStr === 'travel')) || 
+           (cLow === 'activities' && (catStr === 'activity' || catStr === 'entertainment')) ||
+           (cLow === 'miscellaneous' && (catStr === 'misc' || catStr === 'other'));
+  });
+  return matched || null;
+};
 
 const router = Router();
 
@@ -198,7 +218,7 @@ router.get('/:id/expenses', authenticateToken, requireTripMembership, async (req
 
     res.json({ expenses, totalSpent });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching expenses' });
+    handleRouteError(error, res, 'Error fetching expenses');
   }
 });
 
@@ -209,19 +229,84 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, requireNo
     const userId = req.user!.userId;
     const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl, receiptPublicId } = req.body;
 
-    if (!title || !amount || Number(amount) <= 0) {
+    if (!title || amount === undefined) {
       return res.status(400).json({ error: 'Valid title and positive amount are required' });
     }
 
-    const numAmount = Number(amount);
-    const payerId = paidBy || userId;
+    if (!isSafeString(title, 1, 150)) {
+      return res.status(400).json({ error: 'Expense title must be between 1 and 150 characters' });
+    }
+
+    if (!isValidNumber(amount, 0.01)) {
+      return res.status(400).json({ error: 'Expense amount must be a positive number' });
+    }
+
+    let normalizedCategory = 'Miscellaneous';
+    if (category) {
+      const matched = normalizeCategory(category);
+      if (!matched) {
+        return res.status(400).json({ error: `Invalid category. Must be one of: ${ALLOWED_CATEGORIES.join(', ')}` });
+      }
+      normalizedCategory = matched;
+    }
+
+    if (receiptUrl && !isValidUrl(receiptUrl)) {
+      return res.status(400).json({ error: 'Invalid receipt URL protocol. Only HTTP and HTTPS are permitted.' });
+    }
+
+    if (receiptPublicId) {
+      if (typeof receiptPublicId !== 'string' || receiptPublicId.length > 200) {
+        return res.status(400).json({ error: 'Invalid receiptPublicId format' });
+      }
+      const isOwner = await verifyAssetOwnership(receiptPublicId, userId);
+      if (!isOwner) {
+        return res.status(403).json({ error: 'Access denied: You do not have permission to attach this receipt.' });
+      }
+    }
+
+    if (notes && !isSafeString(notes, 0, 2000)) {
+      return res.status(400).json({ error: 'Notes must not exceed 2000 characters' });
+    }
+
+    const numAmount = Math.round(Number(amount) * 100) / 100;
+    const payerId = (paidBy || userId).toString();
+
+    if (!isValidObjectId(payerId)) {
+      return res.status(400).json({ error: 'Invalid payer user ID' });
+    }
+
+    const payerMember = await TripMember.findOne({ tripId, userId: payerId });
+    if (!payerMember) {
+      return res.status(400).json({ error: 'Expense payer must be an active member of this trip' });
+    }
+
     const typeOfSplit = splitType || 'EQUAL';
+    if (!['EQUAL', 'CUSTOM', 'PERCENTAGE'].includes(typeOfSplit)) {
+      return res.status(400).json({ error: 'Invalid split type. Must be EQUAL, CUSTOM, or PERCENTAGE' });
+    }
 
     // If no participants specified, include all trip members
     let targetParticipants = participants;
     if (!targetParticipants || targetParticipants.length === 0) {
       const members = await TripMember.find({ tripId });
       targetParticipants = members.map(m => ({ userId: m.userId.toString() }));
+    } else {
+      if (!Array.isArray(targetParticipants)) {
+        return res.status(400).json({ error: 'Participants must be an array' });
+      }
+      for (let i = 0; i < targetParticipants.length; i++) {
+        const p = targetParticipants[i];
+        const uId = (typeof p === 'string' ? p : (p?.userId?._id || p?.userId))?.toString();
+        if (!uId || !isValidObjectId(uId)) {
+          return res.status(400).json({ error: `Invalid participant user ID: ${uId || 'undefined'}` });
+        }
+        targetParticipants[i] = typeof p === 'object' && p !== null ? { ...p, userId: uId } : { userId: uId };
+      }
+      const participantUserIds = targetParticipants.map((p: any) => new mongoose.Types.ObjectId(p.userId));
+      const memberCount = await TripMember.countDocuments({ tripId, userId: { $in: participantUserIds } });
+      if (memberCount !== targetParticipants.length) {
+        return res.status(400).json({ error: 'All expense participants must be active members of this trip' });
+      }
     }
 
     let computedParticipants;
@@ -235,7 +320,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, requireNo
       tripId,
       title,
       amount: numAmount,
-      category: category || 'Miscellaneous',
+      category: normalizedCategory,
       date: date ? new Date(date) : new Date(),
       paidBy: payerId,
       splitType: typeOfSplit,
@@ -257,7 +342,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, requireNo
       tripId,
       userId,
       'EXPENSE_ADDED',
-      `added ${currency}${numAmount.toLocaleString()} ${category || 'expense'} "${title}" (Paid by ${payerName})`,
+      `added ${currency}${numAmount.toLocaleString()} ${normalizedCategory} "${title}" (Paid by ${payerName})`,
       { expenseId: expense._id, expense: populated }
     );
 
@@ -291,7 +376,7 @@ router.post('/:id/expenses', authenticateToken, requireTripMembership, requireNo
 
     res.status(201).json({ expense: populated });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error creating expense' });
+    handleRouteError(error, res, 'Error creating expense');
   }
 });
 
@@ -300,6 +385,10 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
   try {
     const { id: tripId, expenseId } = req.params;
     const { title, amount, category, date, paidBy, splitType, participants, notes, receiptUrl, receiptPublicId } = req.body;
+
+    if (!isValidObjectId(expenseId)) {
+      return res.status(400).json({ error: 'Invalid expense ID format' });
+    }
 
     const expense = await Expense.findById(expenseId);
     if (!expense || expense.tripId.toString() !== tripId) {
@@ -322,6 +411,14 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
     const isChangingPayer = paidBy !== undefined && paidBy.toString() !== oldPayerIdStr;
 
     if (isChangingPayer) {
+      if (!isValidObjectId(paidBy)) {
+        return res.status(400).json({ error: 'Invalid new payer user ID format' });
+      }
+      const newPayerMember = await TripMember.findOne({ tripId, userId: paidBy });
+      if (!newPayerMember) {
+        return res.status(400).json({ error: 'New expense payer must be an active member of this trip' });
+      }
+
       // Check if there are confirmed payments linked to this expense
       const hasConfirmedSplitSettlement = await Settlement.exists({
         tripId,
@@ -342,19 +439,84 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
       }
     }
 
-    if (title !== undefined) expense.title = title;
-    if (amount !== undefined) expense.amount = Number(amount);
-    if (category !== undefined) expense.category = category;
-    if (date !== undefined) expense.date = new Date(date);
+    if (title !== undefined) {
+      if (!isSafeString(title, 1, 150)) {
+        return res.status(400).json({ error: 'Expense title must be between 1 and 150 characters' });
+      }
+      expense.title = title.trim();
+    }
+    if (amount !== undefined) {
+      if (!isValidNumber(amount, 0.01)) {
+        return res.status(400).json({ error: 'Expense amount must be a positive number' });
+      }
+      expense.amount = Math.round(Number(amount) * 100) / 100;
+    }
+    if (category !== undefined) {
+      const matched = normalizeCategory(category);
+      if (!matched) {
+        return res.status(400).json({ error: `Invalid category. Must be one of: ${ALLOWED_CATEGORIES.join(', ')}` });
+      }
+      expense.category = matched as any;
+    }
+    if (date !== undefined) {
+      const d = new Date(date);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'Invalid expense date' });
+      }
+      expense.date = d;
+    }
     if (paidBy !== undefined) expense.paidBy = paidBy;
-    if (splitType !== undefined) expense.splitType = splitType;
-    if (notes !== undefined) expense.notes = notes;
-    if (receiptUrl !== undefined) expense.receiptUrl = receiptUrl;
-    if (receiptPublicId !== undefined) expense.receiptPublicId = receiptPublicId;
+    if (splitType !== undefined) {
+      if (!['EQUAL', 'CUSTOM', 'PERCENTAGE'].includes(splitType)) {
+        return res.status(400).json({ error: 'Invalid split type. Must be EQUAL, CUSTOM, or PERCENTAGE' });
+      }
+      expense.splitType = splitType;
+    }
+    if (notes !== undefined) {
+      if (!isSafeString(notes, 0, 2000)) {
+        return res.status(400).json({ error: 'Notes must not exceed 2000 characters' });
+      }
+      expense.notes = notes.trim();
+    }
+    if (receiptUrl !== undefined) {
+      if (receiptUrl && !isValidUrl(receiptUrl)) {
+        return res.status(400).json({ error: 'Invalid receipt URL protocol. Only HTTP and HTTPS are permitted.' });
+      }
+      expense.receiptUrl = receiptUrl;
+    }
+    if (receiptPublicId !== undefined) {
+      if (receiptPublicId && (typeof receiptPublicId !== 'string' || receiptPublicId.length > 200)) {
+        return res.status(400).json({ error: 'Invalid receiptPublicId format' });
+      }
+      const assetCheck = await handleEntityAssetReplacement(
+        oldPublicId,
+        receiptPublicId,
+        currentUserId,
+        'image'
+      );
+      if (!assetCheck.allowed) {
+        return res.status(403).json({ error: assetCheck.error || 'Asset ownership verification failed' });
+      }
+      expense.receiptPublicId = receiptPublicId;
+    }
 
-    if (oldPublicId && receiptPublicId && oldPublicId !== receiptPublicId) {
-      await deleteFromCloudinary(oldPublicId, 'image');
-      await deleteFromCloudinary(oldPublicId, 'raw');
+    if (participants !== undefined) {
+      if (!Array.isArray(participants) || participants.length === 0) {
+        return res.status(400).json({ error: 'Participants must be a non-empty array' });
+      }
+      for (let i = 0; i < participants.length; i++) {
+        const p = participants[i];
+        const uId = (typeof p === 'string' ? p : (p?.userId?._id || p?.userId))?.toString();
+        if (!uId || !isValidObjectId(uId)) {
+          return res.status(400).json({ error: `Invalid participant user ID: ${uId || 'undefined'}` });
+        }
+        participants[i] = typeof p === 'object' && p !== null ? { ...p, userId: uId } : { userId: uId };
+      }
+      const participantUserIds = participants.map((p: any) => new mongoose.Types.ObjectId(p.userId));
+      const memberCount = await TripMember.countDocuments({ tripId, userId: { $in: participantUserIds } });
+      if (memberCount !== participants.length) {
+        return res.status(400).json({ error: 'All expense participants must be active members of this trip' });
+      }
     }
 
     if (participants || amount !== undefined || splitType !== undefined || paidBy !== undefined) {
@@ -417,7 +579,7 @@ router.patch('/:id/expenses/:expenseId', authenticateToken, requireTripMembershi
 
     res.json({ expense: populated });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error updating expense' });
+    handleRouteError(error, res, 'Error updating expense');
   }
 });
 
@@ -429,9 +591,27 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
     const targetUserId = req.body.userId || currentUserId;
     const providedIdempotencyKey = req.body.idempotencyKey;
 
+    if (!isValidObjectId(expenseId)) {
+      return res.status(400).json({ error: 'Invalid expense ID format' });
+    }
+    if (req.body.userId && !isValidObjectId(req.body.userId)) {
+      return res.status(400).json({ error: 'Invalid participant user ID format' });
+    }
+
     const expense = await Expense.findById(expenseId);
     if (!expense || expense.tripId.toString() !== tripId) {
       return res.status(404).json({ error: 'Expense not found' });
+    }
+
+    // Authorization check: User must be paying for self, or be the expense payer, or be trip ADMIN
+    const isAdmin = req.tripMember?.role === 'ADMIN';
+    const isSelf = targetUserId.toString() === currentUserId;
+    const isPayer = expense.paidBy.toString() === currentUserId;
+
+    if (!isAdmin && !isSelf && !isPayer) {
+      return res.status(403).json({
+        error: 'Access denied: You can only record payment for your own share, as the expense payer, or as a trip admin.'
+      });
     }
 
     const participant = expense.participants.find(
@@ -633,7 +813,7 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
 
     res.json({ expense: populated, calculation: freshCalculation });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error marking split paid' });
+    handleRouteError(error, res, 'Error marking split paid');
   }
 });
 
@@ -641,6 +821,10 @@ router.post('/:id/expenses/:expenseId/pay-split', authenticateToken, requireTrip
 router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { id: tripId, expenseId } = req.params;
+
+    if (!isValidObjectId(expenseId)) {
+      return res.status(400).json({ error: 'Invalid expense ID format' });
+    }
 
     const expense = await Expense.findById(expenseId);
     if (!expense || expense.tripId.toString() !== tripId) {
@@ -682,8 +866,11 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
     }
 
     if (expense.receiptPublicId) {
-      await deleteFromCloudinary(expense.receiptPublicId, 'image');
-      await deleteFromCloudinary(expense.receiptPublicId, 'raw');
+      const ownsOld = await verifyAssetOwnership(expense.receiptPublicId, req.user!.userId);
+      if (ownsOld) {
+        await deleteFromCloudinary(expense.receiptPublicId, 'image');
+        await UploadedAsset.deleteOne({ publicId: expense.receiptPublicId });
+      }
     }
 
     const title = expense.title;
@@ -733,7 +920,7 @@ router.delete('/:id/expenses/:expenseId', authenticateToken, requireTripMembersh
       calculation: freshCalculation
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error deleting expense' });
+    handleRouteError(error, res, 'Error deleting expense');
   }
 });
 

@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
 import { Budget, Expense } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireTripAdmin, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { emitToTrip } from '../sockets/socketHandler';
+import { handleRouteError } from '../utils/validation';
 
 const router = Router();
 
@@ -69,19 +70,38 @@ router.get('/:id/budget', authenticateToken, requireTripMembership, async (req: 
       categories: categoryBreakdown
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching budget' });
+    handleRouteError(error, res, 'Error fetching budget');
   }
 });
 
-// PATCH /api/trips/:id/budget
-router.patch('/:id/budget', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
+// PATCH /api/trips/:id/budget (Admin only, non-negative validation)
+router.patch('/:id/budget', authenticateToken, requireTripMembership, requireTripAdmin, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const { totalBudget, categoryBudgets } = req.body;
 
+    if (totalBudget !== undefined) {
+      const numTotal = Number(totalBudget);
+      if (isNaN(numTotal) || numTotal < 0) {
+        return res.status(400).json({ error: 'Total budget must be a non-negative number' });
+      }
+    }
+
+    if (categoryBudgets !== undefined) {
+      if (!Array.isArray(categoryBudgets)) {
+        return res.status(400).json({ error: 'Category budgets must be an array' });
+      }
+      for (const cb of categoryBudgets) {
+        const planned = Number(cb.plannedAmount);
+        if (isNaN(planned) || planned < 0) {
+          return res.status(400).json({ error: `Planned amount for category "${cb.category}" must be a non-negative number` });
+        }
+      }
+    }
+
     let budgetDoc = await Budget.findOne({ tripId });
     if (!budgetDoc) {
-      budgetDoc = new Budget({ tripId, totalBudget: totalBudget || 0, categoryBudgets: [] });
+      budgetDoc = new Budget({ tripId, totalBudget: totalBudget !== undefined ? Number(totalBudget) : 0, categoryBudgets: [] });
     }
 
     if (totalBudget !== undefined) budgetDoc.totalBudget = Number(totalBudget);
@@ -97,7 +117,7 @@ router.patch('/:id/budget', authenticateToken, requireTripMembership, requireNot
     emitToTrip(tripId, 'budget.updated', budgetDoc);
     res.json({ budget: budgetDoc });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error updating budget' });
+    handleRouteError(error, res, 'Error updating budget');
   }
 });
 

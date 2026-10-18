@@ -1,7 +1,10 @@
 import { Router, Response } from 'express';
 import { Activity } from '../models';
 import { authenticateToken } from '../middleware/auth';
-import { requireTripMembership, TripAuthRequest } from '../middleware/tripAuth';
+import { requireTripMembership, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
+import { isSafeString, handleRouteError } from '../utils/validation';
+
+const ALLOWED_USER_ACTIVITY_TYPES = ['CHAT_MESSAGE', 'PHOTO_UPLOADED'];
 
 const router = Router();
 
@@ -16,20 +19,29 @@ router.get('/:id/activity', authenticateToken, requireTripMembership, async (req
 
     res.json({ activities });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching trip activity' });
+    handleRouteError(error, res, 'Error fetching trip activity');
   }
 });
 
 // POST /api/trips/:id/activity (Post a chat message)
-router.post('/:id/activity', authenticateToken, requireTripMembership, async (req: TripAuthRequest, res: Response) => {
+router.post('/:id/activity', authenticateToken, requireTripMembership, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const tripId = req.params.id;
     const userId = req.user!.userId;
     const { text, message, type, clientMessageId } = req.body;
 
     const chatText = message || text;
-    if (!chatText || !chatText.trim()) {
+    if (!chatText || typeof chatText !== 'string' || !chatText.trim()) {
       return res.status(400).json({ error: 'Message content is required' });
+    }
+
+    if (!isSafeString(chatText.trim(), 1, 5000)) {
+      return res.status(400).json({ error: 'Message must not exceed 5000 characters' });
+    }
+
+    const activityType = type || 'CHAT_MESSAGE';
+    if (!ALLOWED_USER_ACTIVITY_TYPES.includes(activityType)) {
+      return res.status(400).json({ error: `Invalid activity type. Allowed: ${ALLOWED_USER_ACTIVITY_TYPES.join(', ')}` });
     }
 
     console.log(`[RTCHAT] API_REQUEST_RECEIVED tripId=${tripId} userId=${userId} clientMessageId=${clientMessageId}`);
@@ -39,16 +51,16 @@ router.post('/:id/activity', authenticateToken, requireTripMembership, async (re
     const activity = await logActivity(
       tripId,
       userId,
-      type || 'CHAT_MESSAGE',
+      activityType,
       chatText.trim(),
-      clientMessageId ? { clientMessageId } : undefined
+      clientMessageId && typeof clientMessageId === 'string' ? { clientMessageId: clientMessageId.slice(0, 100) } : undefined
     );
 
     console.log(`[RTCHAT] API_RESPONSE_PREPARED activityId=${activity?._id} in ${Date.now() - startTime}ms`);
 
     res.status(201).json({ activity });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error sending message' });
+    handleRouteError(error, res, 'Error sending message');
   }
 });
 
@@ -68,7 +80,7 @@ router.post('/:id/activity/read', authenticateToken, requireTripMembership, asyn
 
     res.json({ message: 'Messages marked as read' });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error marking messages read' });
+    handleRouteError(error, res, 'Error marking messages read');
   }
 });
 

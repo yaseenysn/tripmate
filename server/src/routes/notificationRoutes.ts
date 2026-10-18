@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { Notification } from '../models';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { isValidObjectId } from '../utils/validation';
 
 const router = Router();
 
@@ -21,6 +22,10 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 router.patch('/:id/read', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ error: 'Invalid notification ID format' });
+    }
+
     const userId = req.user!.userId;
 
     const notif = await Notification.findOneAndUpdate(

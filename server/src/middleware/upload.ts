@@ -4,12 +4,11 @@ import { Request } from 'express';
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 const ALLOWED_MIME_TYPES = [
-  // Images
+  // Images (SVG removed to prevent Stored XSS)
   'image/jpeg',
   'image/png',
   'image/gif',
   'image/webp',
-  'image/svg+xml',
   'image/heic',
   // Documents
   'application/pdf',
@@ -22,7 +21,7 @@ const ALLOWED_MIME_TYPES = [
 ];
 
 const ALLOWED_EXTENSIONS = [
-  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.heic',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic',
   '.pdf', '.doc', '.docx', '.txt', '.csv', '.xls', '.xlsx'
 ];
 
@@ -31,10 +30,11 @@ const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilt
   const ext = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
   const isExtAllowed = ALLOWED_EXTENSIONS.includes(ext);
 
-  if (isMimeAllowed || isExtAllowed) {
+  // Require BOTH allowed MIME type and allowed file extension (&& instead of ||)
+  if (isMimeAllowed && isExtAllowed) {
     cb(null, true);
   } else {
-    cb(new Error(`Unsupported file type: "${file.originalname}". Only images (JPG, PNG, WEBP, GIF, SVG) and documents (PDF, DOC, DOCX, TXT, CSV, XLS) are allowed.`));
+    cb(new Error(`Unsupported file type: "${file.originalname}". Only safe images (JPG, PNG, WEBP, GIF, HEIC) and documents (PDF, DOC, DOCX, TXT, CSV, XLS) are allowed. SVG and executable files are prohibited.`));
   }
 };
 

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { X, Download, ExternalLink, User, Calendar } from 'lucide-react';
+import { sanitizeUrl } from '../utils/security';
 
 interface ImagePreviewModalProps {
   isOpen?: boolean;
@@ -96,7 +97,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
 
           <div className="flex items-center gap-2 flex-shrink-0">
             <a
-              href={finalUrl}
+              href={sanitizeUrl(finalUrl)}
               target="_blank"
               rel="noreferrer"
               download
@@ -106,7 +107,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
               <Download className="w-4 h-4" />
             </a>
             <a
-              href={finalUrl}
+              href={sanitizeUrl(finalUrl)}
               target="_blank"
               rel="noreferrer"
               className="p-2 text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-xl transition-all"

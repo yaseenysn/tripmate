@@ -8,6 +8,7 @@ import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
 import { sendInviteEmail } from '../services/emailService';
 import { emitToTrip } from '../sockets/socketHandler';
+import { isValidEmail, isSafeString, isValidObjectId, handleRouteError } from '../utils/validation';
 
 const router = Router();
 
@@ -59,8 +60,12 @@ router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMember
     const { tripId } = req.params;
     const { email, message } = req.body;
 
-    if (!email || typeof email !== 'string' || !email.includes('@')) {
+    if (!email || typeof email !== 'string' || !isValidEmail(email.trim())) {
       return res.status(400).json({ error: 'Please provide a valid recipient email address' });
+    }
+
+    if (message !== undefined && message !== null && !isSafeString(message, 0, 1000)) {
+      return res.status(400).json({ error: 'Custom message must not exceed 1000 characters' });
     }
 
     const targetEmail = email.trim().toLowerCase();
@@ -131,7 +136,7 @@ router.post('/trips/:tripId/invites/email', authenticateToken, requireTripMember
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error sending email invitation' });
+    handleRouteError(error, res, 'Error sending email invitation');
   }
 });
 
@@ -140,6 +145,20 @@ router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, 
   try {
     const { tripId } = req.params;
     const { expiresAt, maxUses } = req.body;
+
+    if (maxUses !== undefined && maxUses !== null) {
+      const numUses = Number(maxUses);
+      if (!Number.isInteger(numUses) || numUses < 1 || numUses > 1000) {
+        return res.status(400).json({ error: 'maxUses must be an integer between 1 and 1000' });
+      }
+    }
+
+    if (expiresAt !== undefined && expiresAt !== null) {
+      const expDate = new Date(expiresAt);
+      if (isNaN(expDate.getTime()) || expDate.getTime() <= Date.now()) {
+        return res.status(400).json({ error: 'expiresAt must be a valid future date' });
+      }
+    }
 
     const token = crypto.randomBytes(24).toString('hex');
     let code = generate6DigitCode();
@@ -173,7 +192,7 @@ router.post('/trips/:tripId/invites', authenticateToken, requireTripMembership, 
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error generating trip invite' });
+    handleRouteError(error, res, 'Error generating trip invite');
   }
 });
 
@@ -200,7 +219,7 @@ router.get('/trips/:tripId/invites', authenticateToken, requireTripMembership, a
 
     res.json({ invites: enriched });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching invites' });
+    handleRouteError(error, res, 'Error fetching invites');
   }
 });
 
@@ -208,6 +227,10 @@ router.get('/trips/:tripId/invites', authenticateToken, requireTripMembership, a
 router.post('/trips/:tripId/invites/:inviteId/revoke', authenticateToken, requireTripMembership, requireTripAdmin, requireNotClosedTrip, async (req: TripAuthRequest, res: Response) => {
   try {
     const { inviteId } = req.params;
+    if (!isValidObjectId(inviteId)) {
+      return res.status(400).json({ error: 'Invalid invite ID format' });
+    }
+
     const invite = await TripInvite.findById(inviteId);
     if (!invite) {
       return res.status(404).json({ error: 'Invite not found' });
@@ -218,7 +241,7 @@ router.post('/trips/:tripId/invites/:inviteId/revoke', authenticateToken, requir
 
     res.json({ message: 'Invite revoked successfully', invite });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error revoking invite' });
+    handleRouteError(error, res, 'Error revoking invite');
   }
 });
 
@@ -226,7 +249,11 @@ router.post('/trips/:tripId/invites/:inviteId/revoke', authenticateToken, requir
 router.get('/invites/:token', async (req: Request, res: Response) => {
   try {
     const { token } = req.params;
-    const invite = await TripInvite.findOne({ token, isActive: true });
+    if (!token || typeof token !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(token.trim())) {
+      return res.status(404).json({ error: 'Invalid or expired invite link' });
+    }
+
+    const invite = await TripInvite.findOne({ token: token.trim(), isActive: true });
 
     if (!invite) {
       return res.status(404).json({ error: 'Invalid or expired invite link' });
@@ -271,7 +298,7 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
       }
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching invite preview' });
+    handleRouteError(error, res, 'Error fetching invite preview');
   }
 });
 
@@ -281,7 +308,11 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
     const { token } = req.params;
     const userId = req.user!.userId;
 
-    const invite = await TripInvite.findOne({ token, isActive: true });
+    if (!token || typeof token !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(token.trim())) {
+      return res.status(404).json({ error: 'Invalid or expired invite link' });
+    }
+
+    const invite = await TripInvite.findOne({ token: token.trim(), isActive: true });
     if (!invite) {
       return res.status(404).json({ error: 'Invalid or expired invite link' });
     }
@@ -350,7 +381,7 @@ router.post('/invites/:token/join', authenticateToken, async (req: AuthRequest, 
 
     res.status(201).json({ message: 'Successfully joined trip', tripId: trip._id });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error joining trip' });
+    handleRouteError(error, res, 'Error joining trip');
   }
 });
 
@@ -360,8 +391,8 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
     const { code } = req.body;
     const userId = req.user!.userId;
 
-    if (!code) {
-      return res.status(400).json({ error: 'Invite code is required' });
+    if (!code || typeof code !== 'string' || !/^[A-Za-z0-9]{4,10}$/.test(code.trim())) {
+      return res.status(400).json({ error: 'Invite code must be 4 to 10 alphanumeric characters' });
     }
 
     const cleanCode = code.trim().toUpperCase();
@@ -433,7 +464,7 @@ router.post('/trips/join-with-code', authenticateToken, async (req: AuthRequest,
 
     res.status(201).json({ message: 'Successfully joined trip', tripId: trip._id });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error joining trip with code' });
+    handleRouteError(error, res, 'Error joining trip with code');
   }
 });
 

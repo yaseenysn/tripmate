@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { getAuthToken } from './api';
 
 let socket: Socket | null = null;
 let currentJoinedRoom: string | null = null;
@@ -51,6 +52,7 @@ const resolveSocketUrl = (): string => {
 };
 
 export const getSocket = (): Socket => {
+  const token = getAuthToken();
   if (!socket) {
     const rawUrl = resolveSocketUrl();
 
@@ -58,6 +60,9 @@ export const getSocket = (): Socket => {
 
     socket = io(rawUrl, {
       autoConnect: true,
+      auth: (cb) => {
+        cb({ token: getAuthToken() });
+      },
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -86,6 +91,11 @@ export const getSocket = (): Socket => {
     socket.on('connect_error', (err) => {
       console.error(`[Socket.IO Client] Connect error to ${rawUrl}:`, err.message);
     });
+  } else {
+    socket.auth = { token };
+    if (!socket.connected && token) {
+      socket.connect();
+    }
   }
   return socket;
 };

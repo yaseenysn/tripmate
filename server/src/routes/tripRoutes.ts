@@ -1,6 +1,22 @@
 import { Router, Response } from 'express';
 import mongoose from 'mongoose';
-import { Trip, TripMember, Expense, Budget, Settlement } from '../models';
+import {
+  Trip,
+  TripMember,
+  Expense,
+  Budget,
+  Settlement,
+  Booking,
+  DocumentModel,
+  Task,
+  ItineraryItem,
+  Poll,
+  PollVote,
+  Activity,
+  TripInvite,
+  Notification,
+  UploadedAsset
+} from '../models';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import {
   requireTripMembership,
@@ -15,6 +31,8 @@ import {
   calculateTripBalancesAndSettlements,
   generateAuthoritativeTripReport
 } from '../services/settlementService';
+import { isSafeString, isValidUrl, isValidNumber, isValidObjectId, handleRouteError } from '../utils/validation';
+import { verifyAssetOwnership, handleEntityAssetReplacement } from '../utils/assetSecurity';
 
 const router = Router();
 
@@ -85,7 +103,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     res.json({ trips: enrichedTrips });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error fetching user trips' });
+    handleRouteError(error, res, 'Error fetching user trips');
   }
 });
 
@@ -111,21 +129,65 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       });
     }
 
+    if (!isSafeString(name, 1, 150)) {
+      return res.status(400).json({ error: 'Trip name must be between 1 and 150 characters' });
+    }
+
+    if (!isSafeString(destination, 1, 150)) {
+      return res.status(400).json({ error: 'Destination must be between 1 and 150 characters' });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ error: 'Start date and end date must be valid dates' });
+    }
+
+    if (end < start) {
+      return res.status(400).json({ error: 'Trip end date cannot be earlier than start date' });
+    }
+
+    if (estimatedBudget !== undefined && !isValidNumber(estimatedBudget, 0)) {
+      return res.status(400).json({ error: 'Estimated budget must be a non-negative number' });
+    }
+
+    if (coverImage && !isValidUrl(coverImage)) {
+      return res.status(400).json({ error: 'Invalid cover image URL protocol. Only HTTP and HTTPS are permitted.' });
+    }
+
+    if (currency && !isSafeString(currency, 1, 10)) {
+      return res.status(400).json({ error: 'Currency symbol must be between 1 and 10 characters' });
+    }
+
+    if (description && !isSafeString(description, 0, 2000)) {
+      return res.status(400).json({ error: 'Description must not exceed 2000 characters' });
+    }
+
+    if (coverImagePublicId) {
+      if (typeof coverImagePublicId !== 'string' || coverImagePublicId.length > 200) {
+        return res.status(400).json({ error: 'Invalid coverImagePublicId format' });
+      }
+      const isOwner = await verifyAssetOwnership(coverImagePublicId, userId!);
+      if (!isOwner) {
+        return res.status(403).json({ error: 'Access denied: You do not have permission to attach this cover image.' });
+      }
+    }
+
     const budgetAmount = Number(estimatedBudget) || 0;
     const initialStatus = 'ACTIVE';
 
     const trip = await Trip.create({
-      name,
-      destination,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      name: name.trim(),
+      destination: destination.trim(),
+      startDate: start,
+      endDate: end,
       coverImage:
         coverImage ||
         'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80',
       coverImagePublicId: coverImagePublicId || undefined,
-      currency: currency || '₹',
+      currency: currency ? currency.trim() : '₹',
       estimatedBudget: budgetAmount,
-      description: description || '',
+      description: description ? description.trim() : '',
       createdBy: userId,
       status: initialStatus,
       settlementStatus: 'PENDING'
@@ -160,7 +222,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     res.status(201).json({ trip });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Error creating trip' });
+    handleRouteError(error, res, 'Error creating trip');
   }
 });
 
@@ -210,7 +272,7 @@ router.get(
         budget: budgetDoc
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error fetching trip details' });
+      handleRouteError(error, res, 'Error fetching trip details');
     }
   }
 );
@@ -245,7 +307,7 @@ router.get(
         suggestedSettlements: calculation.suggestedSettlements
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error generating finish preview' });
+      handleRouteError(error, res, 'Error generating finish preview');
     }
   }
 );
@@ -298,7 +360,7 @@ router.post(
         calculation
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error finishing trip' });
+      handleRouteError(error, res, 'Error finishing trip');
     }
   }
 );
@@ -359,7 +421,7 @@ router.post(
         calculation
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error closing trip' });
+      handleRouteError(error, res, 'Error closing trip');
     }
   }
 );
@@ -374,7 +436,7 @@ router.get(
       const report = await generateAuthoritativeTripReport(req.params.id);
       res.json({ report });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error generating trip report' });
+      handleRouteError(error, res, 'Error generating trip report');
     }
   }
 );
@@ -408,19 +470,83 @@ router.patch(
 
       const oldPublicId = trip.coverImagePublicId;
 
-      if (name) trip.name = name;
-      if (destination) trip.destination = destination;
-      if (startDate) trip.startDate = new Date(startDate);
-      if (endDate) trip.endDate = new Date(endDate);
-      if (coverImage !== undefined) trip.coverImage = coverImage;
-      if (coverImagePublicId !== undefined) trip.coverImagePublicId = coverImagePublicId;
-      if (currency) trip.currency = currency;
-      if (estimatedBudget !== undefined) trip.estimatedBudget = Number(estimatedBudget);
-      if (description !== undefined) trip.description = description;
-      if (status) trip.status = status;
+      if (name !== undefined) {
+        if (!isSafeString(name, 1, 150)) {
+          return res.status(400).json({ error: 'Trip name must be between 1 and 150 characters' });
+        }
+        trip.name = name.trim();
+      }
 
-      if (oldPublicId && coverImagePublicId && oldPublicId !== coverImagePublicId) {
-        await deleteFromCloudinary(oldPublicId, 'image');
+      if (destination !== undefined) {
+        if (!isSafeString(destination, 1, 150)) {
+          return res.status(400).json({ error: 'Destination must be between 1 and 150 characters' });
+        }
+        trip.destination = destination.trim();
+      }
+
+      const newStart = startDate ? new Date(startDate) : trip.startDate;
+      const newEnd = endDate ? new Date(endDate) : trip.endDate;
+      if (startDate && isNaN(new Date(startDate).getTime())) {
+        return res.status(400).json({ error: 'Start date must be a valid date' });
+      }
+      if (endDate && isNaN(new Date(endDate).getTime())) {
+        return res.status(400).json({ error: 'End date must be a valid date' });
+      }
+      if (newEnd < newStart) {
+        return res.status(400).json({ error: 'Trip end date cannot be earlier than start date' });
+      }
+      if (startDate) trip.startDate = newStart;
+      if (endDate) trip.endDate = newEnd;
+
+      if (coverImage !== undefined) {
+        if (coverImage && !isValidUrl(coverImage)) {
+          return res.status(400).json({ error: 'Invalid cover image URL protocol. Only HTTP and HTTPS are permitted.' });
+        }
+        trip.coverImage = coverImage;
+      }
+      if (coverImagePublicId !== undefined) {
+        if (coverImagePublicId && (typeof coverImagePublicId !== 'string' || coverImagePublicId.length > 200)) {
+          return res.status(400).json({ error: 'Invalid coverImagePublicId format' });
+        }
+        const assetCheck = await handleEntityAssetReplacement(
+          oldPublicId,
+          coverImagePublicId,
+          req.user!.userId,
+          'image'
+        );
+        if (!assetCheck.allowed) {
+          return res.status(403).json({ error: assetCheck.error || 'Asset ownership verification failed' });
+        }
+        trip.coverImagePublicId = coverImagePublicId;
+      }
+      if (currency !== undefined) {
+        if (!isSafeString(currency, 1, 10)) {
+          return res.status(400).json({ error: 'Currency symbol must be between 1 and 10 characters' });
+        }
+        trip.currency = currency.trim();
+      }
+      if (estimatedBudget !== undefined) {
+        if (!isValidNumber(estimatedBudget, 0)) {
+          return res.status(400).json({ error: 'Estimated budget must be a non-negative number' });
+        }
+        trip.estimatedBudget = Number(estimatedBudget);
+      }
+      if (description !== undefined) {
+        if (!isSafeString(description, 0, 2000)) {
+          return res.status(400).json({ error: 'Description must not exceed 2000 characters' });
+        }
+        trip.description = description.trim();
+      }
+      if (status !== undefined) {
+        if (status === 'CLOSED') {
+          return res.status(400).json({
+            error: 'To close a trip, use the dedicated POST /api/trips/:id/close endpoint to ensure financial settlement reconciliation.'
+          });
+        }
+        if (!['UPCOMING', 'ACTIVE', 'COMPLETED'].includes(status)) {
+          return res.status(400).json({ error: 'Status must be one of UPCOMING, ACTIVE, or COMPLETED' });
+        }
+        trip.status = status;
       }
 
       await trip.save();
@@ -444,7 +570,7 @@ router.patch(
 
       res.json({ trip });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error updating trip' });
+      handleRouteError(error, res, 'Error updating trip');
     }
   }
 );
@@ -460,19 +586,35 @@ router.delete(
     try {
       const tripId = req.params.id;
       const trip = await Trip.findById(tripId);
+
+      // Verify asset ownership before deleting Cloudinary cover image
       if (trip && trip.coverImagePublicId) {
-        await deleteFromCloudinary(trip.coverImagePublicId, 'image');
+        const ownsOld = await verifyAssetOwnership(trip.coverImagePublicId, req.user!.userId);
+        if (ownsOld) {
+          await deleteFromCloudinary(trip.coverImagePublicId, 'image');
+          await UploadedAsset.deleteOne({ publicId: trip.coverImagePublicId });
+        }
       }
 
+      // Comprehensive cascade cleanup across all dependent collections
       await Trip.findByIdAndDelete(tripId);
       await TripMember.deleteMany({ tripId });
       await Expense.deleteMany({ tripId });
       await Budget.deleteMany({ tripId });
       await Settlement.deleteMany({ tripId });
+      await Booking.deleteMany({ tripId });
+      await DocumentModel.deleteMany({ tripId });
+      await Task.deleteMany({ tripId });
+      await ItineraryItem.deleteMany({ tripId });
+      await Poll.deleteMany({ tripId });
+      await PollVote.deleteMany({ tripId });
+      await Activity.deleteMany({ tripId });
+      await TripInvite.deleteMany({ tripId });
+      await Notification.deleteMany({ $or: [{ tripId }, { link: tripId.toString() }] });
 
       res.json({ message: 'Trip deleted successfully' });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || 'Error deleting trip' });
+      handleRouteError(error, res, 'Error deleting trip');
     }
   }
 );
