@@ -34,6 +34,7 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import { User, Trip, TripMember, Expense, Settlement } from '../models';
 import tripRoutes from '../routes/tripRoutes';
 import settlementRoutes from '../routes/settlementRoutes';
+import path from 'path';
 import {
   calculateTripBalancesAndSettlements,
   generateAuthoritativeTripReport
@@ -41,8 +42,9 @@ import {
 
 // Dynamic loader for client PDF generator to preserve server rootDir boundaries in tsc
 const loadPdfDocGenerator = async () => {
-  // @ts-ignore
-  const mod = await import('../../../client/src/services/pdfReportGenerator');
+  const pdfGeneratorPath = path.resolve(__dirname, '../../../client/src/services/pdfReportGenerator.js');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mod = require(pdfGeneratorPath);
   return mod.createTripReportPDFDoc;
 };
 
