@@ -1525,19 +1525,28 @@ export const App: React.FC = () => {
 
   const isAdmin = tripData?.userRole === 'ADMIN';
 
+  // Header visibility condition:
+  // Hide global header on trip workspace subpages (Bookings, Expenses, Summary, Info, etc.)
+  // Keep visible on App Home / My Trips and in Group Chat
+  const isTripSubpage = Boolean(
+    activeTripId && (activeSection !== 'feed' || showTripInfo || showReportModal)
+  );
+
   return (
     <div className="h-screen h-dvh max-h-screen max-h-dvh overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
       {/* Top App Header */}
-      <WhatsAppHeader
-        user={user}
-        unreadNotificationsCount={notifications.filter((n) => !n.isRead).length}
-        onLogout={handleLogout}
-        onOpenCreateTrip={() => setShowCreateModal(true)}
-        onOpenJoinTrip={() => setShowJoinModal(true)}
-        onOpenNotifications={() => setShowNotifications(true)}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-      />
+      {!isTripSubpage && (
+        <WhatsAppHeader
+          user={user}
+          unreadNotificationsCount={notifications.filter((n) => !n.isRead).length}
+          onLogout={handleLogout}
+          onOpenCreateTrip={() => setShowCreateModal(true)}
+          onOpenJoinTrip={() => setShowJoinModal(true)}
+          onOpenNotifications={() => setShowNotifications(true)}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+        />
+      )}
 
       {/* Main WhatsApp Web Inspired 2-Column Shell */}
       <div className="flex-1 min-h-0 flex overflow-hidden max-w-7xl w-full mx-auto">
