@@ -172,8 +172,16 @@ export const App: React.FC = () => {
       if (path.startsWith('/trips/')) {
         const tId = path.split('/trips/')[1]?.split('?')[0];
         if (tId) {
+          setPendingJoinToken(null);
           setActiveTripId(tId);
           setActiveSection('feed');
+          return;
+        }
+      }
+      if (path.includes('/join/')) {
+        const rawToken = path.split('/join/')[1]?.split('?')[0]?.split('#')[0]?.trim();
+        if (rawToken) {
+          setPendingJoinToken(rawToken);
           return;
         }
       }
@@ -199,7 +207,7 @@ export const App: React.FC = () => {
       }
       if (urlTripId && loadedTrips.some((t: any) => t._id === urlTripId)) {
         setActiveTripId(urlTripId);
-      } else if (!activeTripId && loadedTrips.length > 0 && window.innerWidth >= 768) {
+      } else if (!activeTripId && !path.includes('/join/') && loadedTrips.length > 0 && window.innerWidth >= 768) {
         setActiveTripId(loadedTrips[0]._id);
       }
     } catch (err) {

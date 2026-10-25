@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Users, MapPin, Calendar, Check, X, Loader2, AlertCircle, ShieldCheck, LogOut } from 'lucide-react';
 import { apiPreviewInvite, apiJoinWithToken } from '../services/api';
 
@@ -22,23 +22,44 @@ export const JoinInviteConfirmationModal: React.FC<JoinInviteConfirmationModalPr
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
   const [alreadyMember, setAlreadyMember] = useState(false);
+  const hasRedirectedRef = useRef(false);
+  const currentUserId = currentUser?._id || currentUser?.id;
 
   useEffect(() => {
     if (!token) return;
+    let isCancelled = false;
+    hasRedirectedRef.current = false;
     setLoading(true);
     setError('');
 
     apiPreviewInvite(token)
       .then((data) => {
+        if (isCancelled) return;
+        // Authoritative membership check: If current user is already a member,
+        // navigate directly to trip workspace and never show the join prompt.
+        if ((data?.isAlreadyMember || data?.alreadyMember) && data?.trip?._id) {
+          if (!hasRedirectedRef.current) {
+            hasRedirectedRef.current = true;
+            onJoined(data.trip._id);
+          }
+          return;
+        }
         setPreviewData(data);
       })
       .catch((err) => {
+        if (isCancelled) return;
         setError(err.message || 'Invalid or expired trip invite link');
       })
       .finally(() => {
-        setLoading(false);
+        if (!isCancelled) {
+          setLoading(false);
+        }
       });
-  }, [token]);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [token, currentUserId, onJoined]);
 
   if (!token) return null;
 
@@ -63,12 +84,14 @@ export const JoinInviteConfirmationModal: React.FC<JoinInviteConfirmationModalPr
       const res = await apiJoinWithToken(token);
       if (res.alreadyMember) {
         setAlreadyMember(true);
+        onJoined(res.tripId || trip?._id);
       } else {
         onJoined(res.tripId);
       }
     } catch (err: any) {
       if (err.message && err.message.includes('already a member')) {
         setAlreadyMember(true);
+        onJoined(trip?._id);
       } else {
         setError(err.message || 'Failed to join trip');
       }

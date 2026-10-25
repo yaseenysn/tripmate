@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { Trip, TripInvite, TripMember, User } from '../models';
-import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { authenticateToken, optionalAuthenticateToken, AuthRequest } from '../middleware/auth';
 import { requireTripMembership, requireTripAdmin, requireNotClosedTrip, TripAuthRequest } from '../middleware/tripAuth';
 import { logActivity } from '../services/activityService';
 import { createNotification } from '../services/notificationService';
@@ -246,7 +246,7 @@ router.post('/trips/:tripId/invites/:inviteId/revoke', authenticateToken, requir
 });
 
 // Preview trip by token (Public or authenticated)
-router.get('/invites/:token', async (req: Request, res: Response) => {
+router.get('/invites/:token', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { token } = req.params;
     if (!token || typeof token !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(token.trim())) {
@@ -275,6 +275,15 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
     const inviter = await User.findById(invite.createdBy).select('name email avatar');
     const memberCount = await TripMember.countDocuments({ tripId: trip._id });
 
+    // Authoritatively check if the requesting authenticated user is already a member
+    let isAlreadyMember = false;
+    if (req.user?.userId) {
+      const existingMember = await TripMember.findOne({ tripId: trip._id, userId: req.user.userId });
+      if (existingMember) {
+        isAlreadyMember = true;
+      }
+    }
+
     res.json({
       trip: {
         _id: trip._id,
@@ -295,7 +304,9 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
         code: invite.code,
         token: invite.token,
         invitedEmail: invite.invitedEmail
-      }
+      },
+      isAlreadyMember,
+      alreadyMember: isAlreadyMember
     });
   } catch (error: any) {
     handleRouteError(error, res, 'Error fetching invite preview');

@@ -26,3 +26,18 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };
+
+export const optionalAuthenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; email: string };
+      req.user = decoded;
+    } catch (error) {
+      // For optional auth, ignore invalid/expired token and proceed with req.user undefined
+    }
+  }
+  next();
+};
