@@ -8,6 +8,7 @@ interface WhatsAppHeaderProps {
   onOpenCreateTrip: () => void;
   onOpenJoinTrip: () => void;
   onOpenNotifications: () => void;
+  onOpenProfileSettings: () => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
 }
@@ -19,6 +20,7 @@ export const WhatsAppHeader: React.FC<WhatsAppHeaderProps> = ({
   onOpenCreateTrip,
   onOpenJoinTrip,
   onOpenNotifications,
+  onOpenProfileSettings,
   searchQuery,
   setSearchQuery,
 }) => {
@@ -114,15 +116,25 @@ export const WhatsAppHeader: React.FC<WhatsAppHeaderProps> = ({
             {showUserMenu && (
               <div className="absolute right-0 mt-2 w-48 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in duration-150">
                 <div className="px-3 py-2 border-b border-slate-800">
-                  <p className="text-xs font-bold text-slate-100 truncate">{user?.name || 'Yaseen'}</p>
-                  <p className="text-[10px] text-slate-400 truncate">{user?.email || 'yaseen@example.com'}</p>
+                  <p className="text-xs font-bold text-slate-100 truncate">{user?.name || 'User'}</p>
+                  <p className="text-[10px] text-slate-400 truncate">{user?.email || ''}</p>
                 </div>
+                <button
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    onOpenProfileSettings();
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 rounded-xl font-medium flex items-center gap-2 mt-1 transition-colors"
+                >
+                  <User className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Profile Settings</span>
+                </button>
                 <button
                   onClick={() => {
                     setShowUserMenu(false);
                     onLogout();
                   }}
-                  className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 rounded-xl font-medium flex items-center gap-2 mt-1"
+                  className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 rounded-xl font-medium flex items-center gap-2 mt-0.5 transition-colors"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Log Out</span>

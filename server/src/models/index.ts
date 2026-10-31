@@ -7,6 +7,11 @@ export interface IUser extends Document {
   passwordHash: string;
   avatar: string;
   avatarPublicId?: string;
+  bio?: string;
+  phone?: string;
+  pendingEmail?: string;
+  emailVerificationCode?: string;
+  emailVerificationExpires?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -17,6 +22,11 @@ const UserSchema = new Schema<IUser>({
   passwordHash: { type: String, required: true },
   avatar: { type: String, default: '' },
   avatarPublicId: { type: String },
+  bio: { type: String, default: '', trim: true, maxlength: 500 },
+  phone: { type: String, default: '', trim: true, maxlength: 25 },
+  pendingEmail: { type: String, lowercase: true, trim: true },
+  emailVerificationCode: { type: String },
+  emailVerificationExpires: { type: Date },
 }, { timestamps: true });
 
 export const User = mongoose.model<IUser>('User', UserSchema);

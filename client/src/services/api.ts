@@ -122,6 +122,8 @@ export const apiUpdateTrip = (tripId: string, updates: any) =>
   request(`/trips/${tripId}`, { method: 'PATCH', body: JSON.stringify(updates) });
 export const apiDeleteTrip = (tripId: string) =>
   request(`/trips/${tripId}`, { method: 'DELETE' });
+export const apiLeaveTrip = (tripId: string) =>
+  request(`/trips/${tripId}/leave`, { method: 'POST' });
 export const apiGetTripFinishPreview = (tripId: string) =>
   request(`/trips/${tripId}/finish-preview`);
 export const apiFinishTrip = (tripId: string) =>
@@ -242,9 +244,41 @@ export const apiMarkNotificationRead = (id: string) =>
 export const apiMarkAllNotificationsRead = () =>
   request('/notifications/read-all', { method: 'PATCH' });
 
-// Profile Update
-export const apiUpdateProfile = (profileData: { name?: string; avatar?: string; avatarPublicId?: string }) =>
-  request('/auth/profile', { method: 'PATCH', body: JSON.stringify(profileData) });
+// Profile & Account Management
+export const apiUpdateProfile = (profileData: {
+  name?: string;
+  avatar?: string;
+  avatarPublicId?: string;
+  bio?: string;
+  phone?: string;
+}) => request('/auth/profile', { method: 'PATCH', body: JSON.stringify(profileData) });
+
+export const apiChangePassword = (currentPassword: string, newPassword: string) =>
+  request('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+
+export const apiRequestEmailChange = (newEmail: string, currentPassword: string) =>
+  request('/auth/request-email-change', {
+    method: 'POST',
+    body: JSON.stringify({ newEmail, currentPassword }),
+  });
+
+export const apiVerifyEmailChange = (code: string) =>
+  request('/auth/verify-email-change', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+
+export const apiDeleteAccount = (password: string, confirmationText: string) =>
+  request('/auth/delete-account', {
+    method: 'POST',
+    body: JSON.stringify({ password, confirmationText }),
+  });
+
+export const apiLogout = () =>
+  request('/auth/logout', { method: 'POST' }).catch(() => ({}));
 
 // File Upload to Backend -> Cloudinary
 export interface UploadResponse {

@@ -9,6 +9,8 @@ interface TripListViewProps {
   onSelectTrip: (tripId: string) => void;
   onOpenCreateTrip: () => void;
   onOpenJoinTrip: () => void;
+  onOpenProfileSettings?: () => void;
+  user?: any;
 }
 
 export const TripListView: React.FC<TripListViewProps> = ({
@@ -19,6 +21,8 @@ export const TripListView: React.FC<TripListViewProps> = ({
   onSelectTrip,
   onOpenCreateTrip,
   onOpenJoinTrip,
+  onOpenProfileSettings,
+  user,
 }) => {
   // Filter trips by search query
   const filteredTrips = trips.filter((trip) => {
@@ -49,7 +53,22 @@ export const TripListView: React.FC<TripListViewProps> = ({
 
       {/* Action Buttons Header */}
       <div className="px-3 py-2 border-b border-slate-800/60 flex items-center justify-between text-xs text-slate-400 font-semibold uppercase tracking-wider flex-shrink-0">
-        <span>My Trips ({filteredTrips.length})</span>
+        <div className="flex items-center gap-2">
+          {onOpenProfileSettings && user && (
+            <button
+              onClick={onOpenProfileSettings}
+              className="md:hidden w-6 h-6 rounded-full overflow-hidden border border-indigo-500/50 flex-shrink-0"
+              title="Profile Settings"
+            >
+              <img
+                src={user.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80'}
+                alt={user.name}
+                className="w-full h-full object-cover"
+              />
+            </button>
+          )}
+          <span>My Trips ({filteredTrips.length})</span>
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={onOpenJoinTrip}

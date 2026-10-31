@@ -31,6 +31,7 @@ import { BudgetView } from './components/BudgetView';
 
 import { JoinInviteConfirmationModal } from './components/JoinInviteConfirmationModal';
 import { WhatsAppComposer } from './components/WhatsAppComposer';
+import { ProfileSettingsModal } from './components/ProfileSettingsModal';
 
 // API & Socket
 import {
@@ -111,6 +112,7 @@ export const App: React.FC = () => {
   const [autoOpenModalCategory, setAutoOpenModalCategory] = useState<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Synchronize ref on activeTripId change
@@ -627,6 +629,17 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleTripUpdated = (updatedTrip: any) => {
+    if (!updatedTrip || !updatedTrip._id) return;
+    if (String(updatedTrip._id) === activeTripIdRef.current) {
+      setTripData((prev: any) => ({ ...prev, ...updatedTrip }));
+    }
+    setTrips((prev: any[]) =>
+      prev.map((t) => (String(t._id) === String(updatedTrip._id) ? { ...t, ...updatedTrip } : t))
+    );
+    updateTripCacheItem(updatedTrip._id, 'trip', updatedTrip);
+  };
+
   useEffect(() => {
     if (activeTripId) {
       console.log(`[RTCHAT] ACTIVE_TRIP_ID ${activeTripId}`);
@@ -1134,13 +1147,8 @@ export const App: React.FC = () => {
         }
       };
 
-      const handleTripUpdated = (updatedTrip: any) => {
-        if (updatedTrip && String(updatedTrip._id) === activeTripIdRef.current) {
-          setTripData((prev: any) => ({ ...prev, ...updatedTrip }));
-          setTrips((prev: any[]) =>
-            prev.map((t) => (String(t._id) === String(updatedTrip._id) ? { ...t, ...updatedTrip } : t))
-          );
-        }
+      const handleTripUpdatedSocket = (updatedTrip: any) => {
+        handleTripUpdated(updatedTrip);
       };
 
       const handleTripLifecycle = (payload: any) => {
@@ -1158,12 +1166,55 @@ export const App: React.FC = () => {
         }
       };
 
+      const handleTripDeletedEvent = (payload: any) => {
+        const deletedId = payload?.tripId;
+        if (deletedId) {
+          deleteTripCache(deletedId);
+          if (activeTripIdRef.current === deletedId) {
+            setActiveTripId(null);
+          }
+          loadTrips();
+        }
+      };
+
+      const handleUserProfileUpdated = (data: any) => {
+        if (!data || !data.userId) return;
+        const uId = data.userId.toString();
+        setUser((prevUser: any) => {
+          if (prevUser && prevUser._id === uId) {
+            return { ...prevUser, ...data };
+          }
+          return prevUser;
+        });
+        setMembers((prevMembers) =>
+          prevMembers.map((m) => {
+            const mId = (m.user?._id || m.userId?._id || m.user || m.userId)?.toString();
+            if (mId === uId) {
+              const updatedUser = typeof m.user === 'object' ? { ...m.user, ...data } : data;
+              return { ...m, user: updatedUser, userId: updatedUser };
+            }
+            return m;
+          })
+        );
+        setActivities((prevActivities) =>
+          prevActivities.map((act) => {
+            const actUserId = (act.userId?._id || act.userId)?.toString();
+            if (actUserId === uId) {
+              const updatedSender = typeof act.userId === 'object' ? { ...act.userId, ...data } : data;
+              return { ...act, userId: updatedSender };
+            }
+            return act;
+          })
+        );
+      };
+
       socket.on('activity.created', handleActivityCreated);
       socket.on('expense.created', handleExpenseCreated);
       socket.on('expense.updated', handleExpenseUpdated);
       socket.on('expense.deleted', handleExpenseDeleted);
       socket.on('member.joined', handleMemberSync);
       socket.on('member.removed', handleMemberSync);
+      socket.on('member.left', handleMemberSync);
       socket.on('itinerary.created', handleItineraryCreated);
       socket.on('itinerary.updated', handleItineraryUpdated);
       socket.on('itinerary.deleted', handleItineraryDeleted);
@@ -1178,8 +1229,10 @@ export const App: React.FC = () => {
       socket.on('document.created', handleDocumentCreated);
       socket.on('document.deleted', handleDocumentDeleted);
       socket.on('settlement.updated', handleSettlementSync);
-      socket.on('trip.updated', handleTripUpdated);
+      socket.on('trip.updated', handleTripUpdatedSocket);
       socket.on('trip.lifecycle', handleTripLifecycle);
+      socket.on('trip.deleted', handleTripDeletedEvent);
+      socket.on('user.profile_updated', handleUserProfileUpdated);
 
       return () => {
         leaveTripRoom(activeTripId);
@@ -1189,6 +1242,7 @@ export const App: React.FC = () => {
         socket.off('expense.deleted', handleExpenseDeleted);
         socket.off('member.joined', handleMemberSync);
         socket.off('member.removed', handleMemberSync);
+        socket.off('member.left', handleMemberSync);
         socket.off('itinerary.created', handleItineraryCreated);
         socket.off('itinerary.updated', handleItineraryUpdated);
         socket.off('itinerary.deleted', handleItineraryDeleted);
@@ -1203,8 +1257,10 @@ export const App: React.FC = () => {
         socket.off('document.created', handleDocumentCreated);
         socket.off('document.deleted', handleDocumentDeleted);
         socket.off('settlement.updated', handleSettlementSync);
-        socket.off('trip.updated', handleTripUpdated);
+        socket.off('trip.updated', handleTripUpdatedSocket);
         socket.off('trip.lifecycle', handleTripLifecycle);
+        socket.off('trip.deleted', handleTripDeletedEvent);
+        socket.off('user.profile_updated', handleUserProfileUpdated);
       };
     }
   }, [activeTripId]);
@@ -1543,6 +1599,7 @@ export const App: React.FC = () => {
           onOpenCreateTrip={() => setShowCreateModal(true)}
           onOpenJoinTrip={() => setShowJoinModal(true)}
           onOpenNotifications={() => setShowNotifications(true)}
+          onOpenProfileSettings={() => setShowProfileModal(true)}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
         />
@@ -1564,6 +1621,8 @@ export const App: React.FC = () => {
             onSelectTrip={(id) => handleSelectTrip(id)}
             onOpenCreateTrip={() => setShowCreateModal(true)}
             onOpenJoinTrip={() => setShowJoinModal(true)}
+            onOpenProfileSettings={() => setShowProfileModal(true)}
+            user={user}
           />
         </div>
 
@@ -1848,6 +1907,16 @@ export const App: React.FC = () => {
               setShowTripInfo(false);
             }}
             onDeleteTrip={handleDeleteTripGroup}
+            onTripUpdated={(updatedTrip) => {
+              handleTripUpdated(updatedTrip);
+            }}
+            onLeftGroup={() => {
+              if (activeTripId) {
+                deleteTripCache(activeTripId);
+                setActiveTripId(null);
+                loadTrips();
+              }
+            }}
             onOpenTripReport={() => setShowReportModal(true)}
             onOpenFinishConfirmation={() => setShowFinishModal(true)}
           />
@@ -1962,6 +2031,14 @@ export const App: React.FC = () => {
         notifications={notifications}
         isOpen={showNotifications}
         onClose={() => setShowNotifications(false)}
+      />
+
+      <ProfileSettingsModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        user={user}
+        onUserUpdated={(updatedUser) => setUser(updatedUser)}
+        onLogout={handleLogout}
       />
 
       {pendingJoinToken && (

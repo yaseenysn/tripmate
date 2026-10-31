@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Mail, CheckCircle2, Copy, Check, Send, AlertCircle, Share2, Link } from 'lucide-react';
-import { apiSendEmailInvite, apiGetInvites, apiCreateInvite } from '../services/api';
+import { X, Mail, CheckCircle2, Copy, Check, Send, AlertCircle, Share2, Link, RefreshCw, Ban, Loader2 } from 'lucide-react';
+import { apiSendEmailInvite, apiGetInvites, apiCreateInvite, apiRevokeInvite } from '../services/api';
 
 interface InviteModalProps {
   isOpen: boolean;
@@ -15,6 +15,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
   onClose,
   tripId,
   tripName,
+  isAdmin = false,
 }) => {
   // Email form state
   const [email, setEmail] = useState('');
@@ -26,6 +27,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
   // Direct Link state
   const [directInvite, setDirectInvite] = useState<any>(null);
   const [linkLoading, setLinkLoading] = useState(false);
+  const [revoking, setRevoking] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [linkError, setLinkError] = useState('');
 
@@ -45,6 +47,41 @@ export const InviteModal: React.FC<InviteModalProps> = ({
     } catch (err: any) {
       console.error('Error loading invite link:', err);
       setLinkError(err.message || 'Failed to generate direct invite link');
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const handleRevokeInvite = async () => {
+    if (!directInvite?._id) return;
+    if (!confirm('Are you sure you want to revoke this invite link? Anyone using it will no longer be able to join.')) {
+      return;
+    }
+
+    setRevoking(true);
+    setLinkError('');
+    try {
+      await apiRevokeInvite(tripId, directInvite._id);
+      setDirectInvite(null);
+      setSuccessMessage('Invite link has been revoked successfully.');
+    } catch (err: any) {
+      console.error('Failed to revoke invite:', err);
+      setLinkError(err.message || 'Failed to revoke invite link');
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const handleGenerateNewInvite = async () => {
+    setLinkLoading(true);
+    setLinkError('');
+    try {
+      const createRes = await apiCreateInvite(tripId);
+      setDirectInvite(createRes.invite);
+      setSuccessMessage('New invite link generated successfully.');
+    } catch (err: any) {
+      console.error('Failed to generate invite:', err);
+      setLinkError(err.message || 'Failed to generate new invite link');
     } finally {
       setLinkLoading(false);
     }
@@ -145,7 +182,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
             <Mail className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-xl font-extrabold text-slate-100">Invite Member</h2>
+            <h2 className="text-xl font-extrabold text-slate-100">Invite Members</h2>
             <p className="text-xs text-slate-400">Invite friends to "{tripName}"</p>
           </div>
         </div>
@@ -160,7 +197,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
 
         {successMessage && (
           <div className="mb-4 p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-400 flex items-center gap-2.5 shadow-sm">
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0 animate-bounce" />
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
             <span className="font-semibold">{successMessage}</span>
           </div>
         )}
@@ -176,7 +213,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
                 <input
                   type="email"
                   required
-                  placeholder="Enter email address (e.g. bilal@gmail.com)"
+                  placeholder="Enter email address (e.g. friend@gmail.com)"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-800 border border-slate-700/80 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
@@ -231,6 +268,7 @@ export const InviteModal: React.FC<InviteModalProps> = ({
                 <span>{linkError}</span>
               </div>
             )}
+
             <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
               <span className="flex items-center gap-1.5 text-slate-300">
                 <Link className="w-3.5 h-3.5 text-emerald-400" />
@@ -243,35 +281,91 @@ export const InviteModal: React.FC<InviteModalProps> = ({
               )}
             </div>
 
-            <div className="flex gap-2">
-              <input
-                type="text"
-                readOnly
-                value={linkLoading ? 'Generating link...' : directInviteUrl}
-                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 font-mono truncate focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => copyToClipboard(directInviteUrl)}
-                disabled={!directInviteUrl}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
-                title="Copy Link"
-              >
-                {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedLink ? 'Copied' : 'Copy'}</span>
-              </button>
+            {directInvite ? (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={linkLoading ? 'Generating link...' : directInviteUrl}
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 font-mono truncate focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(directInviteUrl)}
+                    disabled={!directInviteUrl}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
+                    title="Copy Link"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? 'Copied' : 'Copy'}</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={handleShareLink}
-                disabled={!directInviteUrl}
-                className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
-                title="Share Link"
-              >
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Share</span>
-              </button>
-            </div>
+                  <button
+                    type="button"
+                    onClick={handleShareLink}
+                    disabled={!directInviteUrl}
+                    className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
+                    title="Share Link"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Share</span>
+                  </button>
+                </div>
+
+                {/* Admin Management: Revoke & Regenerate */}
+                {isAdmin && (
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[10px] text-emerald-400/80 font-medium flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Active Invite Link
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleRevokeInvite}
+                      disabled={revoking}
+                      className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1 hover:underline disabled:opacity-50"
+                    >
+                      {revoking ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>Revoking...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Ban className="w-3 h-3" />
+                          <span>Revoke Link</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-3 space-y-2">
+                <p className="text-xs text-slate-400">No active invite link for this trip.</p>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateNewInvite}
+                    disabled={linkLoading}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1.5 mx-auto transition-all disabled:opacity-50"
+                  >
+                    {linkLoading ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Generating Link...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Generate New Invite Link</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

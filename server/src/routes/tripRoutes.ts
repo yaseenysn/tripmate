@@ -15,7 +15,8 @@ import {
   Activity,
   TripInvite,
   Notification,
-  UploadedAsset
+  UploadedAsset,
+  User
 } from '../models';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import {
@@ -68,7 +69,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     // Parallel fetch: trips list + grouped member counts + grouped expense totals
     const [trips, memberCountAgg, expenseTotalAgg] = await Promise.all([
-      Trip.find({ _id: { $in: tripIds } }).sort({ startDate: 1 }),
+      Trip.find({ _id: { $in: tripIds } }).populate('createdBy', 'name email avatar').sort({ startDate: 1 }),
       TripMember.aggregate([
         { $match: { tripId: { $in: tripObjectIds } } },
         { $group: { _id: '$tripId', count: { $sum: 1 } } }
@@ -233,7 +234,7 @@ router.get(
   requireTripMembership,
   async (req: TripAuthRequest, res: Response) => {
     try {
-      const trip = await Trip.findById(req.params.id);
+      const trip = await Trip.findById(req.params.id).populate('createdBy', 'name email avatar');
       if (!trip) {
         return res.status(404).json({ error: 'Trip not found' });
       }
@@ -566,11 +567,111 @@ router.patch(
         'TRIP_UPDATED',
         `updated trip settings`
       );
-      emitToTrip(trip._id.toString(), 'trip.updated', trip);
+      const populatedTrip = await Trip.findById(trip._id).populate('createdBy', 'name email avatar');
+      emitToTrip(trip._id.toString(), 'trip.updated', populatedTrip || trip);
 
-      res.json({ trip });
+      res.json({ trip: populatedTrip || trip });
     } catch (error: any) {
       handleRouteError(error, res, 'Error updating trip');
+    }
+  }
+);
+
+// POST /api/trips/:id/leave - Leave a trip/group
+router.post(
+  '/:id/leave',
+  authenticateToken,
+  requireTripMembership,
+  requireNotClosedTrip,
+  async (req: TripAuthRequest, res: Response) => {
+    try {
+      const tripId = req.params.id;
+      const userId = req.user!.userId;
+
+      const trip = await Trip.findById(tripId);
+      if (!trip) {
+        return res.status(404).json({ error: 'Trip not found' });
+      }
+
+      const memberDoc = await TripMember.findOne({ tripId, userId }).populate('userId', 'name email');
+      if (!memberDoc) {
+        return res.status(404).json({ error: 'You are not a member of this trip' });
+      }
+
+      const memberName = (memberDoc.userId as any)?.name || 'Member';
+      const totalMembers = await TripMember.countDocuments({ tripId });
+      const targetUserIdStr = userId.toString();
+
+      // 1. Ownership check: If member is the trip creator/owner and other members exist, require transferring ownership first
+      const ownerId = (trip.createdBy?._id || trip.createdBy).toString();
+      const isOwner = ownerId === targetUserIdStr;
+      if (isOwner && totalMembers > 1) {
+        return res.status(400).json({
+          error: 'You are the group owner. You must transfer group ownership to another member before leaving the group.'
+        });
+      }
+
+      // 2. Sole Admin check: If member is the sole admin and other members exist, require promoting another admin
+      if (memberDoc.role === 'ADMIN' && totalMembers > 1) {
+        const adminCount = await TripMember.countDocuments({ tripId, role: 'ADMIN' });
+        if (adminCount <= 1) {
+          return res.status(400).json({
+            error: 'You are the sole administrator of this group. Please promote another member to admin before leaving.'
+          });
+        }
+      }
+
+      // 3. Strict Financial Safety: Verify member has zero net balance
+      const calculation = await calculateTripBalancesAndSettlements(tripId);
+      const targetBalance = calculation.memberBalances.find((m) => m.userId === targetUserIdStr);
+
+      if (targetBalance && Math.abs(targetBalance.netBalance) > 0.01) {
+        const isOwed = targetBalance.netBalance > 0;
+        return res.status(400).json({
+          error: `Cannot leave the group because you have an unsettled balance of ₹${Math.abs(targetBalance.netBalance).toFixed(2)} (${isOwed ? 'to receive' : 'to pay'}). All balances must be settled before leaving.`
+        });
+      }
+
+      // Remove the member
+      await TripMember.deleteOne({ _id: memberDoc._id });
+
+      // If no members are left, clean up the trip (preserving financial records)
+      if (totalMembers <= 1) {
+        await Trip.findByIdAndDelete(tripId);
+        await Booking.deleteMany({ tripId });
+        await DocumentModel.deleteMany({ tripId });
+        await Task.deleteMany({ tripId });
+        await ItineraryItem.deleteMany({ tripId });
+        await Poll.deleteMany({ tripId });
+        await PollVote.deleteMany({ tripId });
+        await Activity.deleteMany({ tripId });
+        await TripInvite.deleteMany({ tripId });
+        await Notification.deleteMany({ $or: [{ tripId }, { link: tripId.toString() }] });
+
+        emitToTrip(tripId, 'trip.deleted', { tripId });
+        return res.json({ message: 'You have left the group. As the sole member, the group has been deleted.', groupDeleted: true });
+      }
+
+      // Log activity and emit socket events
+      await logActivity(
+        tripId,
+        userId,
+        'MEMBER_LEFT',
+        `${memberName} left the group`
+      );
+
+      emitToTrip(tripId, 'member.left', {
+        tripId,
+        userId,
+        memberId: memberDoc._id
+      });
+      emitToTrip(tripId, 'member.removed', {
+        memberId: memberDoc._id
+      });
+
+      res.json({ message: 'You have successfully left the group' });
+    } catch (error: any) {
+      handleRouteError(error, res, 'Error leaving group');
     }
   }
 );
@@ -596,12 +697,9 @@ router.delete(
         }
       }
 
-      // Comprehensive cascade cleanup across all dependent collections
+      // Cascade cleanup across non-financial collections (preserving financial records for accounting integrity)
       await Trip.findByIdAndDelete(tripId);
       await TripMember.deleteMany({ tripId });
-      await Expense.deleteMany({ tripId });
-      await Budget.deleteMany({ tripId });
-      await Settlement.deleteMany({ tripId });
       await Booking.deleteMany({ tripId });
       await DocumentModel.deleteMany({ tripId });
       await Task.deleteMany({ tripId });
@@ -611,6 +709,8 @@ router.delete(
       await Activity.deleteMany({ tripId });
       await TripInvite.deleteMany({ tripId });
       await Notification.deleteMany({ $or: [{ tripId }, { link: tripId.toString() }] });
+
+      emitToTrip(tripId, 'trip.deleted', { tripId });
 
       res.json({ message: 'Trip deleted successfully' });
     } catch (error: any) {

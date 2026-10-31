@@ -18,56 +18,151 @@ export const validateFileBufferContent = (
     return { valid: false, reason: 'Uploaded file is empty.' };
   }
 
-  // 1. Detect executable binaries (DOS/Windows PE "MZ", Linux ELF "\x7fELF")
+  // 1. Detect executable binaries (DOS/Windows PE "MZ", Linux ELF "\x7fELF", Shebang "#!")
   if (buffer.length >= 2 && buffer[0] === 0x4d && buffer[1] === 0x5a) {
     return { valid: false, reason: 'Executable files (MZ/PE) are strictly prohibited.' };
   }
   if (buffer.length >= 4 && buffer[0] === 0x7f && buffer[1] === 0x45 && buffer[2] === 0x4c && buffer[3] === 0x46) {
     return { valid: false, reason: 'Executable binaries (ELF) are strictly prohibited.' };
   }
+  if (buffer.length >= 2 && buffer[0] === 0x23 && buffer[1] === 0x21) {
+    return { valid: false, reason: 'Executable script files (shebang #!) are strictly prohibited.' };
+  }
 
-  // 2. Reject HTML / Script tags masquerading as images or documents
-  const headerText = buffer.subarray(0, Math.min(buffer.length, 1024)).toString('utf-8').toLowerCase();
+  // Detect authoritative magic bytes
+  let detectedType: 'jpeg' | 'png' | 'gif' | 'webp' | 'pdf' | 'zip' | 'unknown' = 'unknown';
+
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    detectedType = 'jpeg';
+  } else if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    detectedType = 'png';
+  } else if (
+    buffer.length >= 6 &&
+    (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a')
+  ) {
+    detectedType = 'gif';
+  } else if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    detectedType = 'webp';
+  } else if (buffer.length >= 5 && buffer.subarray(0, 5).toString('ascii') === '%PDF-') {
+    detectedType = 'pdf';
+  } else if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x50 &&
+    buffer[1] === 0x4b &&
+    buffer[2] === 0x03 &&
+    buffer[3] === 0x04
+  ) {
+    detectedType = 'zip';
+  }
+
+  // 2. Reject HTML / SVG / Script payloads
+  let offset = 0;
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    offset = 3;
+  }
+  const sample = buffer.subarray(offset, Math.min(buffer.length, offset + 2048)).toString('utf-8').trimStart().toLowerCase();
+
+  // Strict script and HTML injection checks (even for polyglots or embedded blocks)
   if (
-    headerText.includes('<script') ||
-    headerText.includes('<?php') ||
-    headerText.includes('<!doctype html') ||
-    headerText.includes('<html') ||
-    headerText.includes('<svg')
+    sample.includes('<script') ||
+    sample.includes('<?php') ||
+    sample.includes('<!doctype html') ||
+    sample.includes('<html') ||
+    sample.includes('<body') ||
+    sample.includes('<iframe') ||
+    sample.includes('javascript:')
   ) {
     return { valid: false, reason: 'HTML, SVG, and script payloads are strictly prohibited.' };
   }
 
-  // 3. For image mimetypes, enforce magic byte signatures
-  if (mimetype === 'image/jpeg') {
-    // JPEG starts with FF D8 FF
-    if (buffer.length < 3 || buffer[0] !== 0xff || buffer[1] !== 0xd8 || buffer[2] !== 0xff) {
+  // SVG Detection:
+  const normMime = (mimetype || '').toLowerCase();
+  const lastDot = (originalname || '').lastIndexOf('.');
+  const ext = lastDot !== -1 ? originalname.toLowerCase().substring(lastDot) : '';
+
+  if (normMime === 'image/svg+xml' || ext === '.svg') {
+    return { valid: false, reason: 'HTML, SVG, and script payloads are strictly prohibited.' };
+  }
+
+  // File content starts with SVG or XML declaring SVG
+  if (sample.startsWith('<svg') || sample.startsWith('<!doctype svg') || sample.startsWith('<svg:')) {
+    return { valid: false, reason: 'HTML, SVG, and script payloads are strictly prohibited.' };
+  }
+  if (sample.startsWith('<?xml')) {
+    const afterXml = sample.replace(/^<\?xml[^>]*\?>\s*/, '').replace(/<!--[\s\S]*?-->\s*/g, '');
+    if (afterXml.startsWith('<svg') || afterXml.startsWith('<!doctype svg') || afterXml.startsWith('<svg:')) {
+      return { valid: false, reason: 'HTML, SVG, and script payloads are strictly prohibited.' };
+    }
+  }
+
+  // If content is not an authentic binary image, but contains <svg anywhere in sample
+  if (detectedType === 'unknown' && (sample.includes('<svg') || sample.includes('xmlns="http://www.w3.org/2000/svg"'))) {
+    return { valid: false, reason: 'HTML, SVG, and script payloads are strictly prohibited.' };
+  }
+
+  // 3. For image and document mimetypes / extensions, enforce magic byte signatures and extension consistency
+  if (mimetype === 'image/jpeg' || ext === '.jpg' || ext === '.jpeg') {
+    if (ext && ext !== '.jpg' && ext !== '.jpeg') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for JPEG image.' };
+    }
+    if (mimetype && mimetype !== 'image/jpeg') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for JPEG image.' };
+    }
+    if (detectedType !== 'jpeg') {
       return { valid: false, reason: 'File content does not match a valid JPEG image signature.' };
     }
-  } else if (mimetype === 'image/png') {
-    // PNG starts with 89 50 4E 47 0D 0A 1A 0A
-    const pngMagic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-    if (buffer.length < 8 || !pngMagic.every((b, i) => buffer[i] === b)) {
+  } else if (mimetype === 'image/png' || ext === '.png') {
+    if (ext && ext !== '.png') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for PNG image.' };
+    }
+    if (mimetype && mimetype !== 'image/png') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for PNG image.' };
+    }
+    if (detectedType !== 'png') {
       return { valid: false, reason: 'File content does not match a valid PNG image signature.' };
     }
-  } else if (mimetype === 'image/gif') {
-    // GIF starts with GIF87a or GIF89a
-    const gifHeader = buffer.subarray(0, 6).toString('ascii');
-    if (gifHeader !== 'GIF87a' && gifHeader !== 'GIF89a') {
+  } else if (mimetype === 'image/gif' || ext === '.gif') {
+    if (ext && ext !== '.gif') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for GIF image.' };
+    }
+    if (mimetype && mimetype !== 'image/gif') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for GIF image.' };
+    }
+    if (detectedType !== 'gif') {
       return { valid: false, reason: 'File content does not match a valid GIF image signature.' };
     }
-  } else if (mimetype === 'image/webp') {
-    // WEBP: "RIFF" at 0..3 and "WEBP" at 8..11
-    if (
-      buffer.length < 12 ||
-      buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
-      buffer.subarray(8, 12).toString('ascii') !== 'WEBP'
-    ) {
+  } else if (mimetype === 'image/webp' || ext === '.webp') {
+    if (ext && ext !== '.webp') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for WEBP image.' };
+    }
+    if (mimetype && mimetype !== 'image/webp') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for WEBP image.' };
+    }
+    if (detectedType !== 'webp') {
       return { valid: false, reason: 'File content does not match a valid WEBP image signature.' };
     }
-  } else if (mimetype === 'application/pdf') {
-    // PDF starts with %PDF-
-    if (buffer.length < 5 || buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+  } else if (mimetype === 'application/pdf' || ext === '.pdf') {
+    if (ext && ext !== '.pdf') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for PDF document.' };
+    }
+    if (mimetype && mimetype !== 'application/pdf') {
+      return { valid: false, reason: 'MIME type and file extension mismatch for PDF document.' };
+    }
+    if (detectedType !== 'pdf') {
       return { valid: false, reason: 'File content does not match a valid PDF document signature.' };
     }
   }

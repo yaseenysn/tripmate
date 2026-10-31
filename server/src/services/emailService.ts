@@ -106,3 +106,79 @@ export const sendInviteEmail = async ({
 
   return { success: true, inviteUrl };
 };
+
+interface SendVerificationEmailParams {
+  toEmail: string;
+  userName: string;
+  code: string;
+}
+
+export const sendEmailVerificationCode = async ({
+  toEmail,
+  userName,
+  code,
+}: SendVerificationEmailParams) => {
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #0b141a; color: #e9edef; margin: 0; padding: 20px; }
+          .container { max-width: 500px; margin: 0 auto; background-color: #111b21; border-radius: 20px; border: 1px solid #202c33; overflow: hidden; }
+          .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 25px 20px; text-align: center; color: #ffffff; }
+          .header h1 { margin: 0; font-size: 22px; font-weight: 800; }
+          .content { padding: 30px 24px; text-align: center; }
+          .code-box { font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #10b981; background: #1f2c34; border: 2px dashed #10b981; border-radius: 12px; padding: 16px; margin: 24px 0; display: inline-block; }
+          .footer { padding: 16px; text-align: center; font-size: 11px; color: #64748b; border-top: 1px solid #202c33; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Verify Your New Email</h1>
+            <p>TripMate Security Verification</p>
+          </div>
+          <div class="content">
+            <p style="color: #94a3b8; font-size: 14px;">Hello ${userName},</p>
+            <p style="color: #cbd5e1; font-size: 14px;">Use the verification code below to confirm updating your account email address:</p>
+            <div class="code-box">${code}</div>
+            <p style="color: #64748b; font-size: 12px;">This code will expire in 15 minutes. If you did not request this change, please ignore this email.</p>
+          </div>
+          <div class="footer">Sent via TripMate Account Security</div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  console.log('\n=================== EMAIL VERIFICATION CODE ===================');
+  console.log(`To: ${toEmail}`);
+  console.log(`User: ${userName}`);
+  console.log(`Code: ${code}`);
+  console.log('===============================================================\n');
+
+  try {
+    if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      });
+
+      await transporter.sendMail({
+        from: `"TripMate Security" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+        to: toEmail,
+        subject: `TripMate: Your Email Verification Code is ${code}`,
+        html: htmlContent,
+      });
+    }
+  } catch (err) {
+    console.warn('SMTP transport warning (verification code logged to terminal instead):', err);
+  }
+
+  return { success: true };
+};
